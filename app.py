@@ -516,21 +516,27 @@ def analyze_symbol_premium(symbol):
             
             current_price = df['Close'].iloc[-1]
             
+            # Format order blocks, FVGs, and sweeps safely
+            ob_str = ', '.join([f"{ob['type']}@{ob['price']:.2f} ({ob['strength']})" for ob in obs]) if obs else 'None'
+            fvg_str = ', '.join([f"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}" for fvg in fvgs]) if fvgs else 'None'
+            sweep_str = ', '.join([f"{sweep['type']}@{sweep['price']:.2f} ({sweep['strength']})" for sweep in sweeps]) if sweeps else 'None'
+            
             analysis_summary.append(f"""
 {tf} Timeframe:
 - Price: {current_price:.5f} | EMA20: {ema20:.5f} | EMA50: {ema50:.5f} | EMA200: {ema200:.5f}
 - RSI: {rsi:.1f} | ATR: {atr:.5f}
 - Structure: BOS={bos}, CHoCH={choch}
-- Order Blocks: {len(obs)} detected ({', '.join([f\"{ob['type']}@{ob['price']:.2f} ({ob['strength']})\" for ob in obs])})
-- FVGs: {len(fvgs)} detected ({', '.join([f\"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}\" for fvg in fvgs])})
-- Liquidity Sweeps: {len(sweeps)} detected ({', '.join([f\"{sweep['type']}@{sweep['price']:.2f} ({sweep['strength']})\" for sweep in sweeps])})
+- Order Blocks: {len(obs)} detected ({ob_str})
+- FVGs: {len(fvgs)} detected ({fvg_str})
+- Liquidity Sweeps: {len(sweeps)} detected ({sweep_str})
             """)
             
             # Format intra-candle data
             if candle_analysis:
                 recent_candles = []
                 for c in candle_analysis[-3:]:
-                    recent_candles.append(f"Time:{c['time'].strftime('%H:%M')} | {c['candle_type']} | {c['pattern']} | Body:{c['body_ratio']*100:.0f}% | UpperWick:{c['upper_wick_ratio']*100:.0f}% | LowerWick:{c['lower_wick_ratio']*100:.0f}% | Vol:{c['volume']:.0f}")
+                    candle_str = f"Time:{c['time'].strftime('%H:%M')} | {c['candle_type']} | {c['pattern']} | Body:{c['body_ratio']*100:.0f}% | UpperWick:{c['upper_wick_ratio']*100:.0f}% | LowerWick:{c['lower_wick_ratio']*100:.0f}% | Vol:{c['volume']:.0f}"
+                    recent_candles.append(candle_str)
                 
                 intra_candle_data.append(f"""
 {tf} Intra-Candle Analysis (Last 3 Candles):
