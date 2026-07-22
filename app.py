@@ -204,7 +204,7 @@ OUTPUT JSON ONLY:
 
 # ── AI Analysis Function (Groq Free API) ──────────────────────────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2500) -> dict:
-    # Use Groq's free API instead of OpenAI
+    # Use Groq's free API
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
         # Fallback to sidebar input if secret is missing
@@ -215,12 +215,12 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2500) -> 
 
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json" # Fixed typo from original
+        "Content-Type": "application/json"
     }
     
-    # Groq uses the exact same OpenAI-compatible endpoint format
+    # Updated to the latest, most powerful free Groq model
     payload = {
-        "model": "llama-3.1-70b-versatile",  # Free, powerful, and fast
+        "model": "llama-3.3-70b-versatile",  
         "messages": [
             {"role": "system", "content": system_prompt + "\n\nIMPORTANT: You MUST output ONLY valid JSON. Do not wrap it in markdown code blocks."},
             {"role": "user", "content": user_content}
