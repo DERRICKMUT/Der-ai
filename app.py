@@ -5,7 +5,13 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from threading import Thread
-import MetaTrader5 as mt5
+
+# Safely import MetaTrader5 (It will fail on Streamlit Cloud because it's Linux)
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Der-AI | Automated Trading System", page_icon="🤖", layout="wide")
@@ -317,30 +323,30 @@ def initialize_mt5():
 def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
     """Execute trade on MT5"""
     if not MT5_ENABLED:
-        return {"error": "MT5 not enabled"}
+        return {"error": "MT5 not enabled in settings"}
+    
+    if not MT5_AVAILABLE:
+        return {"error": "MT5 requires Windows. Streamlit Cloud runs on Linux. Please use a local Windows PC or Windows VPS for auto-execution."}
     
     try:
-        if not initialize_mt5():
-            return {"error": "MT5 connection failed"}
+        if not mt5.initialize():
+            return {"error": f"MT5 init failed: {mt5.last_error()}"}
         
-        # Get symbol info
+        if not mt5.login(login=int(MT5_ACCOUNT), password=MT5_PASSWORD, server=MT5_SERVER):
+            return {"error": f"MT5 login failed: {mt5.last_error()}"}
+        
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
             return {"error": f"Symbol {symbol} not found"}
         
-        # Determine order type
-        if direction == "BUY":
-            trade_type = mt5.ORDER_TYPE_BUY
-        else:
-            trade_type = mt5.ORDER_TYPE_SELL
+        trade_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
         
-        # Prepare trade request
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": float(lot_size),
             "type": trade_type,
-            "price": entry if entry else mt5.symbol_info_tick(symbol).ask if direction == "BUY" else mt5.symbol_info_tick(symbol).bid,
+            "price": entry,
             "sl": sl,
             "tp": tp,
             "deviation": 10,
@@ -350,12 +356,8 @@ def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
         
-        # Send order
         result = mt5.order_send(request)
-        return {
-            "success": result.retcode == mt5.TRADE_RETCODE_DONE,
-            "order": result._asdict() if result else None
-        }
+        return {"success": result.retcode == mt5.TRADE_RETCODE_DONE, "order": result._asdict() if result else None}
     
     except Exception as e:
         return {"error": str(e)}
