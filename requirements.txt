@@ -3,3 +3,7 @@ requests
 yfinance
 pandas
 numpy
+python-telegram-bot
+schedule
+MetaTrader5
+forex-python-converter
