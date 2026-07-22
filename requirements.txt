@@ -1,5 +1,2 @@
-  flask
+   streamlit
    requests
-   pandas
-   numpy
-   ta
