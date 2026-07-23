@@ -13,7 +13,12 @@ except ImportError:
     MT5_AVAILABLE = False
 
 # ── Page Config ───────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Der-AI | Professional Trading System", page_icon="🎯", layout="wide")
+st.set_page_config(
+    page_title="Der-AI | Professional Trading System",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # ── Initialize Session State ──────────────────────────────────────────────────
 if 'bot_running' not in st.session_state:
@@ -25,9 +30,9 @@ if 'signal_history' not in st.session_state:
 if 'next_check_time' not in st.session_state:
     st.session_state.next_check_time = None
 if 'active_signals' not in st.session_state:
-    st.session_state.active_signals = {}  # Format: {symbol: {'direction': 'BUY', 'entry': 2000.0, 'timestamp': datetime}}
+    st.session_state.active_signals = {}
 if 'app_notifications' not in st.session_state:
-    st.session_state.app_notifications = []  # Logs for rejected signals, cooldowns, and app status
+    st.session_state.app_notifications = []
 
 # ── API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
@@ -55,7 +60,7 @@ def add_notification(note_type: str, message: str):
     """Adds a timestamped notification to the session state (max 100 kept)"""
     st.session_state.app_notifications.append({
         'time': datetime.now().strftime('%H:%M:%S'),
-        'type': note_type,  # 'success', 'warning', 'info'
+        'type': note_type,
         'message': message
     })
     if len(st.session_state.app_notifications) > 100:
@@ -118,11 +123,13 @@ def fetch_mtf_data(symbol):
 def analyze_candle_structure(df):
     if len(df) < 3:
         return []
+    
     analysis = []
     for i in range(max(0, len(df)-10), len(df)):
         candle = df.iloc[i]
         body = abs(candle['Close'] - candle['Open'])
         total_range = candle['High'] - candle['Low']
+        
         if total_range == 0:
             continue
             
@@ -134,109 +141,208 @@ def analyze_candle_structure(df):
         
         candle_type = "BULLISH" if candle['Close'] > candle['Open'] else "BEARISH"
         pattern = "NORMAL"
-        if body_ratio > 0.7: pattern = "STRONG_" + candle_type
-        elif body_ratio < 0.3: pattern = "DOJI"
-        elif upper_wick_ratio > 0.6: pattern = "REJECTION_HIGH"
-        elif lower_wick_ratio > 0.6: pattern = "REJECTION_LOW"
-        elif upper_wick_ratio > 0.4 and body_ratio < 0.4: pattern = "SHOOTING_STAR" if candle_type == "BEARISH" else "HANGING_MAN"
-        elif lower_wick_ratio > 0.4 and body_ratio < 0.4: pattern = "HAMMER" if candle_type == "BULLISH" else "INVERTED_HAMMER"
+        if body_ratio > 0.7:
+            pattern = "STRONG_" + candle_type
+        elif body_ratio < 0.3:
+            pattern = "DOJI"
+        elif upper_wick_ratio > 0.6:
+            pattern = "REJECTION_HIGH"
+        elif lower_wick_ratio > 0.6:
+            pattern = "REJECTION_LOW"
+        elif upper_wick_ratio > 0.4 and body_ratio < 0.4:
+            pattern = "SHOOTING_STAR" if candle_type == "BEARISH" else "HANGING_MAN"
+        elif lower_wick_ratio > 0.4 and body_ratio < 0.4:
+            pattern = "HAMMER" if candle_type == "BULLISH" else "INVERTED_HAMMER"
         
         analysis.append({
-            'time': df.index[i], 'candle_type': candle_type, 'pattern': pattern,
-            'body_ratio': body_ratio, 'upper_wick_ratio': upper_wick_ratio,
-            'lower_wick_ratio': lower_wick_ratio, 'price': candle['Close'], 'volume': candle['Volume']
+            'time': df.index[i],
+            'candle_type': candle_type,
+            'pattern': pattern,
+            'body_ratio': body_ratio,
+            'upper_wick_ratio': upper_wick_ratio,
+            'lower_wick_ratio': lower_wick_ratio,
+            'price': candle['Close'],
+            'volume': candle['Volume']
         })
+    
     return analysis[-5:]
 
 # ── Advanced SMC Detection ────────────────────────────────────────────────────
 def detect_bos_choch(df):
-    if len(df) < 10: return None, None
+    if len(df) < 10:
+        return None, None
+    
     highs = df['High'].rolling(window=5).max()
     lows = df['Low'].rolling(window=5).min()
+    
     recent_high = df['High'].iloc[-1]
     prev_high = highs.iloc[-6] if len(highs) > 5 else df['High'].iloc[-6]
     recent_low = df['Low'].iloc[-1]
     prev_low = lows.iloc[-6] if len(lows) > 5 else df['Low'].iloc[-6]
+    
     bos, choch = None, None
-    if recent_high > prev_high * 1.001: bos = "BULLISH_BOS"
-    elif recent_low < prev_low * 0.999: bos = "BEARISH_BOS"
-    if bos == "BULLISH_BOS" and recent_low > prev_low: choch = "BULLISH_CHOCH"
-    elif bos == "BEARISH_BOS" and recent_high < prev_high: choch = "BEARISH_CHOCH"
+    
+    if recent_high > prev_high * 1.001:
+        bos = "BULLISH_BOS"
+    elif recent_low < prev_low * 0.999:
+        bos = "BEARISH_BOS"
+    
+    if bos == "BULLISH_BOS" and recent_low > prev_low:
+        choch = "BULLISH_CHOCH"
+    elif bos == "BEARISH_BOS" and recent_high < prev_high:
+        choch = "BEARISH_CHOCH"
+    
     return bos, choch
 
+def find_swings(df, window=5):
+    highs = df['High'].rolling(window * 2 + 1, center=True).max()
+    lows = df['Low'].rolling(window * 2 + 1, center=True).min()
+    swing_highs = df['High'][df['High'] == highs].tail(4).tolist()
+    swing_lows = df['Low'][df['Low'] == lows].tail(4).tolist()
+    return {
+        "recent_swing_highs": [round(p, 5) for p in swing_highs],
+        "recent_swing_lows": [round(p, 5) for p in swing_lows]
+    }
+
 def detect_order_blocks(df):
-    if len(df) < 5: return []
+    if len(df) < 5:
+        return []
+    
     order_blocks = []
     for i in range(len(df)-3, len(df)):
-        if i < 2: continue
-        candle, prev_candle = df.iloc[i], df.iloc[i-1]
-        if (candle['Close'] > candle['Open'] and (candle['Close'] - candle['Open']) > (candle['High'] - candle['Low']) * 0.6 and prev_candle['Close'] < prev_candle['Open']):
-            order_blocks.append({'type': 'BULLISH_OB', 'price': candle['Low'], 'time': df.index[i], 'strength': 'STRONG' if (candle['Close'] - candle['Open']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
-        if (candle['Close'] < candle['Open'] and (candle['Open'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.6 and prev_candle['Close'] > prev_candle['Open']):
-            order_blocks.append({'type': 'BEARISH_OB', 'price': candle['High'], 'time': df.index[i], 'strength': 'STRONG' if (candle['Open'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
+        if i < 2:
+            continue
+        candle = df.iloc[i]
+        prev_candle = df.iloc[i-1]
+        
+        if (candle['Close'] > candle['Open'] and 
+            (candle['Close'] - candle['Open']) > (candle['High'] - candle['Low']) * 0.6 and
+            prev_candle['Close'] < prev_candle['Open']):
+            order_blocks.append({
+                'type': 'BULLISH_OB',
+                'price': candle['Low'],
+                'time': df.index[i],
+                'strength': 'STRONG' if (candle['Close'] - candle['Open']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'
+            })
+        
+        if (candle['Close'] < candle['Open'] and
+            (candle['Open'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.6 and
+            prev_candle['Close'] > prev_candle['Open']):
+            order_blocks.append({
+                'type': 'BEARISH_OB',
+                'price': candle['High'],
+                'time': df.index[i],
+                'strength': 'STRONG' if (candle['Open'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'
+            })
+    
     return order_blocks[-3:]
 
 def detect_fvg(df):
-    if len(df) < 3: return []
+    if len(df) < 3:
+        return []
+    
     fvgs = []
     for i in range(len(df)-2, len(df)):
-        if i < 2: continue
-        curr, prev, prev2 = df.iloc[i], df.iloc[i-1], df.iloc[i-2]
+        if i < 2:
+            continue
+        
+        curr = df.iloc[i]
+        prev = df.iloc[i-1]
+        prev2 = df.iloc[i-2]
+        
         if prev['Low'] > prev2['High'] and curr['Low'] > prev['High']:
-            fvgs.append({'type': 'BULLISH_FVG', 'top': prev['Low'], 'bottom': prev2['High'], 'size': abs(prev['Low'] - prev2['High'])})
+            fvgs.append({
+                'type': 'BULLISH_FVG',
+                'top': prev['Low'],
+                'bottom': prev2['High']
+            })
+        
         if prev['High'] < prev2['Low'] and curr['High'] < prev['Low']:
-            fvgs.append({'type': 'BEARISH_FVG', 'top': prev2['Low'], 'bottom': prev['High'], 'size': abs(prev2['Low'] - prev['High'])})
+            fvgs.append({
+                'type': 'BEARISH_FVG',
+                'top': prev2['Low'],
+                'bottom': prev['High']
+            })
+    
     return fvgs[-2:]
 
 def detect_liquidity_sweeps(df):
-    if len(df) < 10: return []
+    if len(df) < 10:
+        return []
+    
     sweeps = []
     recent = df.tail(10)
+    
     for i in range(1, len(recent)):
-        candle, prev = recent.iloc[i], recent.iloc[i-1]
-        if (candle['Low'] < prev['Low'] * 0.999 and candle['Close'] > candle['Open'] and (candle['Close'] - candle['Low']) > (candle['High'] - candle['Low']) * 0.6):
-            sweeps.append({'type': 'BULLISH_SWEEP', 'price': candle['Low'], 'time': recent.index[i], 'strength': 'STRONG' if (candle['Close'] - candle['Low']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
-        if (candle['High'] > prev['High'] * 1.001 and candle['Close'] < candle['Open'] and (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.6):
-            sweeps.append({'type': 'BEARISH_SWEEP', 'price': candle['High'], 'time': recent.index[i], 'strength': 'STRONG' if (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
+        candle = recent.iloc[i]
+        prev = recent.iloc[i-1]
+        
+        if (candle['Low'] < prev['Low'] * 0.999 and 
+            candle['Close'] > candle['Open'] and
+            (candle['Close'] - candle['Low']) > (candle['High'] - candle['Low']) * 0.6):
+            sweeps.append({
+                'type': 'BULLISH_SWEEP',
+                'price': candle['Low'],
+                'time': recent.index[i],
+                'strength': 'STRONG' if (candle['Close'] - candle['Low']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'
+            })
+        
+        if (candle['High'] > prev['High'] * 1.001 and
+            candle['Close'] < candle['Open'] and
+            (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.6):
+            sweeps.append({
+                'type': 'BEARISH_SWEEP',
+                'price': candle['High'],
+                'time': recent.index[i],
+                'strength': 'STRONG' if (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'
+            })
+    
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt (Enhanced for Top-Quality, Zero-Hallucination) ─
-PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI with deep expertise in ICT/SMC concepts. You MUST perform exhaustive, data-driven intra-candle analysis. NO GUESSWORK. NO HALLUCINATIONS. Base your analysis STRICTLY on the provided data.
+# ── Premium AI Analysis Prompt (FIXED TP & WICK LOGIC) ────────────────────────
+PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
 {data_summary}
-
-INTRA-CANDLE ANALYSIS (CRITICAL):
+INTRA-CANDLE ANALYSIS:
 {intra_candle_data}
-
 NEWS CONTEXT:
 {news_summary}
-
 HIGH IMPACT NEWS (next 24h):
 {high_impact_events}
 
 ═══════════════════════════════════════════════════════════════════════════════
 MANDATORY ANALYSIS REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════════════════
-1. **INTRA-CANDLE PRECISION**: Analyze wick ratios, body strength (>70% = strong conviction), and volume confirmation.
-2. **MULTI-TIMEFRAME CONFLUENCE**: H4/H1 for macro bias, M30/M15 for structural zones, M10 for precision entry. REQUIRE minimum 3 timeframes aligned.
-3. **SMC ELEMENTS**: Identify BOS/CHoCH (candle CLOSE beyond level), liquidity sweeps (wick analysis), Order Blocks (body ratio >60%), and FVGs.
-4. **ORDER FLOW**: Look for absorption (large wicks + high volume) or exhaustion (long wicks + declining volume).
-5. **RISK MANAGEMENT**: SL MUST be beyond structural invalidation. TP MUST target logical liquidity pools. Minimum R:R = 1:2.5.
+1. **INTRA-CANDLE PRECISION (STRICT WICK LOGIC)**:
+   - Upper wick on a BEARISH candle = Bearish rejection (VALID for SELL).
+   - Lower wick on a BEARISH candle = Bullish absorption/rejection (INVALID for SELL, indicates buyer presence).
+   - Reverse logic for BULLISH candles.
+   - Volume Divergence: Strong candle body + decreasing volume = Exhaustion/Trap. LOWER THE SCORE SIGNIFICANTLY.
+
+2. **MULTI-TIMEFRAME CONFLUENCE**: H4/H1 for macro bias, M15 for structural zones. REQUIRE minimum 3 timeframes aligned.
+
+3. **SMC ELEMENTS**: Identify BOS/CHoCH, liquidity sweeps, Order Blocks, and FVGs.
+
+4. **RISK MANAGEMENT & TP CALCULATION (STRICT)**:
+   - TP1 MUST be a minimum 1:2 Risk:Reward ratio from your calculated Entry.
+   - TP1 MUST target the nearest 'Recent Swing Lows' (for SELL) or 'Recent Swing Highs' (for BUY) explicitly provided in the data.
+   - TP2 MUST target the next major HTF liquidity pool (next Swing High/Low or unmitigated FVG).
+   - DO NOT hallucinate price levels. Use the exact 'Swing Highs/Lows' provided in the data to set TP.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
 ═══════════════════════════════════════════════════════════════════════════════
-**HIGH CONFIDENCE (Score 85-100)**: 4-5 timeframes aligned, Clear BOS + CHoCH, Liquidity sweep + rejection candle, Entry at STRONG OB/FVG, R:R ≥ 1:2.5.
+**HIGH CONFIDENCE (Score 85-100)**: 4-5 timeframes aligned, Clear BOS + CHoCH, Valid wick rejection (e.g., upper wick on bearish), Entry at STRONG OB/FVG, R:R ≥ 1:2.
 **MEDIUM CONFIDENCE (Score 70-84)**: 3 timeframes aligned, BOS or CHoCH present, Moderate zone, R:R ≥ 1:2.
-**LOW CONFIDENCE (Score <70)**: Choppy market, no clear structure break, poor R:R, or high-impact news imminent.
+**LOW CONFIDENCE (Score <70)**: Choppy market, contradictory wick/volume signals, poor R:R, or high-impact news imminent.
 
 ═══════════════════════════════════════════════════════════════════════════════
 YOUR TASK:
 ═══════════════════════════════════════════════════════════════════════════════
-1. Analyze intra-candle data FIRST.
-2. Determine H4/H1 bias. Find M30/M15 zones. Use M10 for entry timing.
-3. Calculate EXACT SL/TP based on structure.
+1. Analyze intra-candle data FIRST. Reject if wick/volume logic contradicts the direction.
+2. Determine H4/H1 bias. Find M15 zones. 
+3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
 OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
@@ -245,9 +351,9 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
   "signal": "BUY|SELL|WAIT",
   "confluence_score": 0-100,
   "confidence": "HIGH|MEDIUM|LOW",
-  "timeframes_aligned": ["H1", "M30", "M15"],
+  "timeframes_aligned": ["H1", "M15"],
   "intra_candle_analysis": {{
-    "recent_pattern": "description of last 3 candles",
+    "recent_pattern": "description of last 2-3 candles",
     "wick_rejection": "upper/lower/none with ratios",
     "body_strength": "strong/moderate/weak with percentage",
     "volume_trend": "increasing/decreasing/neutral"
@@ -262,7 +368,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
   "take_profit": [0.00, 0.00],
   "rr_ratio": 0.00,
   "reasoning": "Detailed explanation citing SPECIFIC intra-candle patterns, multi-TF confluence, and structural levels",
-  "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors (e.g., 'Missing M15 alignment', 'No clear BOS', 'Poor R:R')",
+  "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors or contradictory wick/volume logic",
   "news_impact": "Analysis if news approaching"
 }}
 """
@@ -311,23 +417,38 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
 
 # ── MT5 Execution Functions ───────────────────────────────────────────────────
 def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
-    if not MT5_ENABLED: return {"error": "MT5 not enabled"}
-    if not MT5_AVAILABLE: return {"error": "MT5 requires Windows. Use Windows VPS for auto-execution."}
+    if not MT5_ENABLED:
+        return {"error": "MT5 not enabled"}
+    if not MT5_AVAILABLE:
+        return {"error": "MT5 requires Windows. Use Windows VPS for auto-execution."}
     try:
-        if not mt5.initialize(): return {"error": f"MT5 init failed"}
-        if not mt5.login(login=int(MT5_ACCOUNT), password=MT5_PASSWORD, server=MT5_SERVER): return {"error": f"MT5 login failed"}
+        if not mt5.initialize():
+            return {"error": f"MT5 init failed"}
+        if not mt5.login(login=int(MT5_ACCOUNT), password=MT5_PASSWORD, server=MT5_SERVER):
+            return {"error": f"MT5 login failed"}
         
         symbol_info = mt5.symbol_info(symbol)
-        if symbol_info is None: return {"error": f"Symbol {symbol} not found"}
+        if symbol_info is None:
+            return {"error": f"Symbol {symbol} not found"}
         
         trade_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
         tick = mt5.symbol_info_tick(symbol)
         
         request = {
-            "action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": float(lot_size), "type": trade_type,
-            "price": tick.ask if direction == "BUY" else tick.bid, "sl": sl, "tp": tp, "deviation": 10,
-            "magic": 234000, "comment": "Der-AI Signal", "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(lot_size),
+            "type": trade_type,
+            "price": tick.ask if direction == "BUY" else tick.bid,
+            "sl": sl,
+            "tp": tp,
+            "deviation": 10,
+            "magic": 234000,
+            "comment": "Der-AI Signal",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
+        
         result = mt5.order_send(request)
         return {"success": result.retcode == mt5.TRADE_RETCODE_DONE, "order": result._asdict() if result else None}
     except Exception as e:
@@ -337,14 +458,16 @@ def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
 def analyze_symbol_premium(symbol):
     try:
         mtf_data = fetch_mtf_data(symbol)
-        if not mtf_data: return None
+        if not mtf_data:
+            return None  # Critical fix: return None for empty data
         
         news = get_high_impact_news()
         analysis_summary, intra_candle_data = [], []
         
         # Deep multi-timeframe analysis (Token-Optimized)
         for tf, df in mtf_data.items():
-            if df.empty: continue
+            if df.empty:
+                continue
             
             # Only do deep analysis on key timeframes to save 60% of tokens
             is_key_tf = tf in ['H1', 'M15']
@@ -353,13 +476,14 @@ def analyze_symbol_premium(symbol):
             obs = detect_order_blocks(df) if is_key_tf else []
             fvgs = detect_fvg(df) if is_key_tf else []
             sweeps = detect_liquidity_sweeps(df) if is_key_tf else []
+            swings = find_swings(df)  # Get exact swing levels for TP calculation
             
             if len(df) > 50:
                 ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
-                ema50 = df['Close'].ewm(span=50).mean().iloc[-1]
-                rsi = 100 - (100 / (1 + df['Close'].diff().clip(lower=0).rolling(14).mean() / df['Close'].diff().clip(upper=0).abs().rolling(14).mean())).iloc[-1]
+                rsi = 100 - (100 / (1 + df['Close'].diff().clip(lower=0).rolling(14).mean() / 
+                      df['Close'].diff().clip(upper=0).abs().rolling(14).mean())).iloc[-1]
             else:
-                ema20, ema50, rsi = 0, 0, 50
+                ema20, rsi = 0, 50
             
             current_price = df['Close'].iloc[-1]
             
@@ -367,8 +491,11 @@ def analyze_symbol_premium(symbol):
                 ob_str = ', '.join([f"{ob['type']}@{ob['price']:.2f}" for ob in obs]) if obs else 'None'
                 fvg_str = ', '.join([f"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}" for fvg in fvgs]) if fvgs else 'None'
                 sweep_str = ', '.join([f"{sweep['type']}@{sweep['price']:.2f}" for sweep in sweeps]) if sweeps else 'None'
+                swing_highs_str = ', '.join([f"{h:.5f}" for h in swings['recent_swing_highs']]) if swings['recent_swing_highs'] else 'None'
+                swing_lows_str = ', '.join([f"{l:.5f}" for l in swings['recent_swing_lows']]) if swings['recent_swing_lows'] else 'None'
                 
-                analysis_summary.append(f"{tf} (KEY): Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos} | OBs: {ob_str} | FVGs: {fvg_str} | Sweeps: {sweep_str}")
+                # NOW INCLUDES SWING HIGHS/LOWS FOR EXACT TP TARGETING
+                analysis_summary.append(f"{tf} (KEY): Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos} | OBs: {ob_str} | FVGs: {fvg_str} | Sweeps: {sweep_str} | Swing Highs: {swing_highs_str} | Swing Lows: {swing_lows_str}")
                 
                 # Only send intra-candle data for key timeframes
                 candle_analysis = analyze_candle_structure(df)
@@ -382,7 +509,12 @@ def analyze_symbol_premium(symbol):
         
         news_text = "\n".join([f"- {n['time']} {n['currency']}: {n['event']} (Impact: {n['impact']})" for n in news[:5]]) if news else "No high-impact news today"
         
-        user_content = [{"type": "text", "text": PREMIUM_ANALYSIS_PROMPT.format(data_summary="\n".join(analysis_summary), intra_candle_data="\n".join(intra_candle_data), news_summary=news_text, high_impact_events=news_text)}]
+        user_content = [{"type": "text", "text": PREMIUM_ANALYSIS_PROMPT.format(
+            data_summary="\n".join(analysis_summary),
+            intra_candle_data="\n".join(intra_candle_data),
+            news_summary=news_text,
+            high_impact_events=news_text
+        )}]
         system_prompt = "You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork."
         
         analysis = call_gpt(system_prompt, user_content, max_tokens=2000)
@@ -396,8 +528,11 @@ def analyze_symbol_premium(symbol):
 
 # ── Signal Formatter for Telegram ────────────────────────────────────────────
 def format_signal_for_telegram(analysis):
-    if 'error' in analysis: return f"❌ Error: {analysis['error']}"
+    if 'error' in analysis:
+        return f"❌ Error: {analysis['error']}"
+    
     emoji = "🟢" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
+    
     message = f"""
 {emoji} <b>DER-AI PREMIUM SIGNAL</b> {emoji}
 
@@ -486,7 +621,13 @@ st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
 # Main Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🔴 Live Monitoring", 
+    "📜 Signal History", 
+    "🔔 Notifications", 
+    "📰 News Calendar", 
+    "⚙️ Settings"
+])
 
 with tab1:
     st.header("🔴 Live Multi-Timeframe Analysis")
@@ -498,16 +639,19 @@ with tab1:
     # Helper function to process a single symbol's result
     def process_symbol_result(result, symbol, is_auto=False):
         # 1. Handle Rate Limits Gracefully
-        if result and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
+        if result and isinstance(result, dict) and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
             msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. The app will automatically resume when the limit resets (~25 mins)."
             if not is_auto: st.warning(msg)
             add_notification('warning', msg)
             return
 
-        if not result or 'error' in result:
-            st.error(f"❌ Error analyzing {symbol}: {result.get('error', 'Unknown error')}")
+        # 2. Handle other errors
+        if result is None or (isinstance(result, dict) and 'error' in result):
+            error_msg = "Data fetch failed or no data available." if result is None else result.get('error', 'Unknown error')
+            st.error(f"❌ Error analyzing {symbol}: {error_msg}")
             return
 
+        # 3. Process valid results
         # STRICT FILTER: Confidence must be HIGH, Score must meet sensitivity threshold
         min_score = sensitivity
         if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= min_score:
@@ -567,7 +711,7 @@ with tab1:
                 if not is_auto: st.markdown("---")
         else:
             # REJECTED SIGNAL
-            ai_reason = result.get('rejection_reason', 'Insufficient confluence factors met.')
+            ai_reason = result.get('rejection_reason', 'Insufficient confluence factors met or contradictory wick/volume logic.')
             msg = f"⚪ **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
             if not is_auto: st.info(msg)
             add_notification('warning', msg)
@@ -605,18 +749,42 @@ with tab2:
     else:
         premium_signals = [s for s in st.session_state.signal_history if s.get('confidence') == 'HIGH' and s.get('confluence_score', 0) >= 80]
         st.metric("Total Premium Signals Logged", len(premium_signals))
+        
         for i, signal in enumerate(reversed(premium_signals)):
             with st.expander(f"{'🟢' if signal.get('signal') == 'BUY' else '🔴'} {signal['symbol']} - {signal.get('signal')} | Score: {signal.get('confluence_score')}/100 | {signal.get('timestamp', 'N/A')}", expanded=False):
+                # Signal details
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Entry", signal.get('entry', 'N/A'))
                 col2.metric("Stop Loss", signal.get('stop_loss', 'N/A'))
                 col3.metric("Take Profit", signal.get('take_profit', ['N/A'])[0] if signal.get('take_profit') else 'N/A')
+                
                 st.write(f"**Bias:** {signal.get('bias')} | **Confidence:** {signal.get('confidence')}")
                 st.write(f"**Timeframes:** {', '.join(signal.get('timeframes_aligned', []))}")
                 st.write(f"**Reasoning:** {signal.get('reasoning')}")
+                
+                # Add MT5 execution button if enabled
+                if MT5_ENABLED:
+                    if st.button("⚡ Execute on MT5", key=f"exec_{i}", use_container_width=True):
+                        exec_result = execute_mt5_trade(
+                            symbol=signal['symbol'],
+                            direction=signal.get('signal'),
+                            entry=signal.get('entry'),
+                            sl=signal.get('stop_loss'),
+                            tp=signal.get('take_profit', [None])[0] if signal.get('take_profit') else None,
+                            lot_size=MT5_LOT_SIZE
+                        )
+                        if exec_result.get('success'):
+                            st.success("✅ Trade executed on MT5!")
+                            add_notification('success', f"✅ **{signal['symbol']}**: Trade executed on MT5")
+                        else:
+                            st.error(f"❌ Execution failed: {exec_result.get('error', 'Unknown error')}")
+                            add_notification('warning', f"❌ **{signal['symbol']}**: Execution failed - {exec_result.get('error', 'Unknown error')}")
+                
+                # Intra-candle analysis
                 if 'intra_candle_analysis' in signal:
                     st.write("**Intra-Candle Analysis:**")
                     st.json(signal['intra_candle_analysis'])
+                
                 st.markdown("---")
 
 with tab3:
