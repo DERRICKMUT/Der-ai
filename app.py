@@ -267,8 +267,8 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
 }}
 """
 
-# ── AI Analysis Function (Groq Free API) ──────────────────────────────────────
-def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 3000) -> dict:
+# ── AI Analysis Function (Groq Free API - Optimized) ──────────────────────────
+def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
         api_key = st.sidebar.text_input("🔑 Groq API Key (gsk_...)", type="password")
@@ -277,21 +277,27 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 3000) -> 
         raise ValueError("Please add a valid GROQ_API_KEY to Streamlit Secrets.")
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    
+    # Switched to 8B Instant: Much higher free tier limits, faster, and uses fewer tokens
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant",  
         "messages": [
             {"role": "system", "content": system_prompt + "\n\nCRITICAL: Output ONLY valid JSON. NO markdown code blocks. NO text outside JSON."},
             {"role": "user", "content": user_content}
         ],
         "max_tokens": max_tokens,
-        "temperature": 0.05,
+        "temperature": 0.1,
     }
     
-    res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=180)
+    res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
     res_data = res.json()
     
+    # Graceful Rate Limit Handling
     if 'error' in res_data:
-        raise ValueError(f"Groq API Error: {res_data['error']['message']}")
+        err_msg = res_data['error'].get('message', '')
+        if 'Rate limit reached' in err_msg or '429' in str(res_data.get('error', {}).get('code', '')):
+            raise ValueError("RATE_LIMIT")  # Special flag for graceful handling
+        raise ValueError(f"Groq API Error: {err_msg}")
     
     content = res_data['choices'][0]['message'].get('content')
     if not content:
@@ -336,41 +342,50 @@ def analyze_symbol_premium(symbol):
         news = get_high_impact_news()
         analysis_summary, intra_candle_data = [], []
         
+        # Deep multi-timeframe analysis (Token-Optimized)
         for tf, df in mtf_data.items():
             if df.empty: continue
             
+            # Only do deep analysis on key timeframes to save 60% of tokens
+            is_key_tf = tf in ['H1', 'M15']
+            
             bos, choch = detect_bos_choch(df)
-            obs = detect_order_blocks(df)
-            fvgs = detect_fvg(df)
-            sweeps = detect_liquidity_sweeps(df)
-            candle_analysis = analyze_candle_structure(df)
+            obs = detect_order_blocks(df) if is_key_tf else []
+            fvgs = detect_fvg(df) if is_key_tf else []
+            sweeps = detect_liquidity_sweeps(df) if is_key_tf else []
             
             if len(df) > 50:
                 ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
                 ema50 = df['Close'].ewm(span=50).mean().iloc[-1]
-                ema200 = df['Close'].ewm(span=200).mean().iloc[-1]
                 rsi = 100 - (100 / (1 + df['Close'].diff().clip(lower=0).rolling(14).mean() / df['Close'].diff().clip(upper=0).abs().rolling(14).mean())).iloc[-1]
-                atr = (df['High'].rolling(14).mean() - df['Low'].rolling(14).mean()).iloc[-1]
             else:
-                ema20, ema50, ema200, rsi, atr = 0, 0, 0, 50, 0
+                ema20, ema50, rsi = 0, 0, 50
             
             current_price = df['Close'].iloc[-1]
-            ob_str = ', '.join([f"{ob['type']}@{ob['price']:.2f} ({ob['strength']})" for ob in obs]) if obs else 'None'
-            fvg_str = ', '.join([f"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}" for fvg in fvgs]) if fvgs else 'None'
-            sweep_str = ', '.join([f"{sweep['type']}@{sweep['price']:.2f} ({sweep['strength']})" for sweep in sweeps]) if sweeps else 'None'
             
-            analysis_summary.append(f"{tf} Timeframe:\n- Price: {current_price:.5f} | EMA20: {ema20:.5f} | EMA50: {ema50:.5f} | EMA200: {ema200:.5f}\n- RSI: {rsi:.1f} | ATR: {atr:.5f}\n- Structure: BOS={bos}, CHoCH={choch}\n- Order Blocks: {len(obs)} detected ({ob_str})\n- FVGs: {len(fvgs)} detected ({fvg_str})\n- Liquidity Sweeps: {len(sweeps)} detected ({sweep_str})")
-            
-            if candle_analysis:
-                recent_candles = [f"Time:{c['time'].strftime('%H:%M')} | {c['candle_type']} | {c['pattern']} | Body:{c['body_ratio']*100:.0f}% | UpperWick:{c['upper_wick_ratio']*100:.0f}% | LowerWick:{c['lower_wick_ratio']*100:.0f}% | Vol:{c['volume']:.0f}" for c in candle_analysis[-3:]]
-                intra_candle_data.append(f"{tf} Intra-Candle Analysis (Last 3 Candles):\n{chr(10).join(recent_candles)}")
+            if is_key_tf:
+                ob_str = ', '.join([f"{ob['type']}@{ob['price']:.2f}" for ob in obs]) if obs else 'None'
+                fvg_str = ', '.join([f"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}" for fvg in fvgs]) if fvgs else 'None'
+                sweep_str = ', '.join([f"{sweep['type']}@{sweep['price']:.2f}" for sweep in sweeps]) if sweeps else 'None'
+                
+                analysis_summary.append(f"{tf} (KEY): Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos} | OBs: {ob_str} | FVGs: {fvg_str} | Sweeps: {sweep_str}")
+                
+                # Only send intra-candle data for key timeframes
+                candle_analysis = analyze_candle_structure(df)
+                if candle_analysis:
+                    recent = candle_analysis[-2:]
+                    c_str = [f"{c['candle_type']} {c['pattern']} (Body:{c['body_ratio']*100:.0f}%)" for c in recent]
+                    intra_candle_data.append(f"{tf} Candles: {' | '.join(c_str)}")
+            else:
+                # Summarize other timeframes in 1 line to save tokens
+                analysis_summary.append(f"{tf}: Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos}")
         
         news_text = "\n".join([f"- {n['time']} {n['currency']}: {n['event']} (Impact: {n['impact']})" for n in news[:5]]) if news else "No high-impact news today"
         
         user_content = [{"type": "text", "text": PREMIUM_ANALYSIS_PROMPT.format(data_summary="\n".join(analysis_summary), intra_candle_data="\n".join(intra_candle_data), news_summary=news_text, high_impact_events=news_text)}]
         system_prompt = "You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork."
         
-        analysis = call_gpt(system_prompt, user_content, max_tokens=3000)
+        analysis = call_gpt(system_prompt, user_content, max_tokens=2000)
         analysis['symbol'] = symbol
         analysis['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         analysis['analyzed_at'] = datetime.now()
@@ -482,6 +497,13 @@ with tab1:
     
     # Helper function to process a single symbol's result
     def process_symbol_result(result, symbol, is_auto=False):
+        # 1. Handle Rate Limits Gracefully
+        if result and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
+            msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. The app will automatically resume when the limit resets (~25 mins)."
+            if not is_auto: st.warning(msg)
+            add_notification('warning', msg)
+            return
+
         if not result or 'error' in result:
             st.error(f"❌ Error analyzing {symbol}: {result.get('error', 'Unknown error')}")
             return
