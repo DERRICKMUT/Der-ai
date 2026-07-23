@@ -1,3 +1,4 @@
+
 import os, json, requests, traceback, base64, time
 from datetime import datetime, timezone, timedelta
 import streamlit as st
@@ -13,7 +14,7 @@ except ImportError:
     MT5_AVAILABLE = False
 
 # ── Page Config ───────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Der-AI | Professional Trading System", page_icon="", layout="wide")
+st.set_page_config(page_title="Der-AI | Professional Trading System", page_icon="🎯", layout="wide")
 
 # ── Initialize Session State ──────────────────────────────────────────────────
 if 'bot_running' not in st.session_state:
@@ -24,6 +25,10 @@ if 'signal_history' not in st.session_state:
     st.session_state.signal_history = []
 if 'next_check_time' not in st.session_state:
     st.session_state.next_check_time = None
+
+# NEW: Track active signals to prevent spam/repetition
+if 'active_signals' not in st.session_state:
+    st.session_state.active_signals = {}  # Format: {symbol: {'direction': 'BUY', 'entry': 2000.0, 'timestamp': datetime}}
 
 # ── API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
@@ -89,7 +94,6 @@ def fetch_mtf_data(symbol):
     data = {}
     try:
         t = yf.Ticker(ticker)
-        # Fetch detailed data for intra-candle analysis
         data['M10'] = t.history(period="1d", interval="10m")
         data['M15'] = t.history(period="2d", interval="15m")
         data['M30'] = t.history(period="5d", interval="30m")
@@ -102,7 +106,6 @@ def fetch_mtf_data(symbol):
 
 # ── Advanced Intra-Candle Analysis ────────────────────────────────────────────
 def analyze_candle_structure(df):
-    """Deep intra-candle analysis: wick ratios, body strength, rejection patterns"""
     if len(df) < 3:
         return []
     
@@ -123,7 +126,6 @@ def analyze_candle_structure(df):
         
         candle_type = "BULLISH" if candle['Close'] > candle['Open'] else "BEARISH"
         
-        # Detect specific patterns
         pattern = "NORMAL"
         if body_ratio > 0.7:
             pattern = "STRONG_" + candle_type
@@ -149,7 +151,7 @@ def analyze_candle_structure(df):
             'volume': candle['Volume']
         })
     
-    return analysis[-5:]  # Last 5 candles
+    return analysis[-5:]
 
 # ── Advanced SMC Detection ────────────────────────────────────────────────────
 def detect_bos_choch(df):
@@ -416,7 +418,7 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 3000) -> 
             {"role": "user", "content": user_content}
         ],
         "max_tokens": max_tokens,
-        "temperature": 0.05,  # Ultra-deterministic for precision
+        "temperature": 0.05,
     }
     
     res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=180)
@@ -429,7 +431,6 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 3000) -> 
     if not content:
         raise ValueError("AI returned no content.")
     
-    # Clean up markdown wrappers
     content = content.strip()
     if content.startswith("```json"):
         content = content[7:]
@@ -488,21 +489,17 @@ def analyze_symbol_premium(symbol):
         analysis_summary = []
         intra_candle_data = []
         
-        # Deep multi-timeframe analysis
         for tf, df in mtf_data.items():
             if df.empty:
                 continue
             
-            # Standard indicators
             bos, choch = detect_bos_choch(df)
             obs = detect_order_blocks(df)
             fvgs = detect_fvg(df)
             sweeps = detect_liquidity_sweeps(df)
             
-            # Intra-candle analysis
             candle_analysis = analyze_candle_structure(df)
             
-            # Technical indicators
             if len(df) > 50:
                 ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
                 ema50 = df['Close'].ewm(span=50).mean().iloc[-1]
@@ -516,7 +513,6 @@ def analyze_symbol_premium(symbol):
             
             current_price = df['Close'].iloc[-1]
             
-            # Format order blocks, FVGs, and sweeps safely
             ob_str = ', '.join([f"{ob['type']}@{ob['price']:.2f} ({ob['strength']})" for ob in obs]) if obs else 'None'
             fvg_str = ', '.join([f"{fvg['type']} {fvg['bottom']:.2f}-{fvg['top']:.2f}" for fvg in fvgs]) if fvgs else 'None'
             sweep_str = ', '.join([f"{sweep['type']}@{sweep['price']:.2f} ({sweep['strength']})" for sweep in sweeps]) if sweeps else 'None'
@@ -531,7 +527,6 @@ def analyze_symbol_premium(symbol):
 - Liquidity Sweeps: {len(sweeps)} detected ({sweep_str})
             """)
             
-            # Format intra-candle data
             if candle_analysis:
                 recent_candles = []
                 for c in candle_analysis[-3:]:
@@ -546,7 +541,6 @@ def analyze_symbol_premium(symbol):
         news_text = "\n".join([f"- {n['time']} {n['currency']}: {n['event']} (Impact: {n['impact']})" 
                                for n in news[:5]]) if news else "No high-impact news today"
         
-        # Call premium AI analysis
         user_content = [
             {"type": "text", "text": PREMIUM_ANALYSIS_PROMPT.format(
                 data_summary="\n".join(analysis_summary),
@@ -611,7 +605,7 @@ st.title("🎯 Der-AI | Professional Multi-Timeframe Trading System")
 st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Alerts | MT5 Execution**")
 
 # Sidebar Configuration
-st.sidebar.header("️ System Configuration")
+st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD'])
 check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=15)
 
@@ -623,13 +617,14 @@ with col1:
         st.session_state.next_check_time = datetime.now()
         st.rerun()
 with col2:
-    if st.button("️ STOP", type="secondary", use_container_width=True):
+    if st.button("⏹️ STOP", type="secondary", use_container_width=True):
         st.session_state.bot_running = False
         st.rerun()
 with col3:
-    if st.button("🔄 RESET", use_container_width=True):
-        st.session_state.bot_running = False
+    if st.button("🗑️ CLEAR MEMORY", use_container_width=True):
+        st.session_state.active_signals = {}
         st.session_state.signal_history = []
+        st.session_state.bot_running = False
         st.session_state.last_analysis_time = None
         st.session_state.next_check_time = None
         st.rerun()
@@ -637,8 +632,6 @@ with col3:
 # Bot Status Display
 if st.session_state.bot_running:
     st.sidebar.success("✅ **BOT RUNNING**")
-    
-    # Countdown timer
     if st.session_state.next_check_time:
         time_left = (st.session_state.next_check_time - datetime.now()).total_seconds()
         if time_left > 0:
@@ -651,24 +644,22 @@ else:
     st.sidebar.warning("⏸️ **BOT STOPPED**")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader(" Session Stats")
+st.sidebar.subheader("📊 Session Stats")
 st.sidebar.metric("Signals Generated", len(st.session_state.signal_history))
 if st.session_state.last_analysis_time:
     st.sidebar.metric("Last Analysis", st.session_state.last_analysis_time.strftime('%H:%M:%S'))
 
 # Main Tabs
-tab1, tab2, tab3, tab4 = st.tabs([" Live Monitoring", "📜 Signal History", "📰 News Calendar", "️ Settings"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔴 Live Monitoring", "📜 Signal History", "📰 News Calendar", "⚙️ Settings"])
 
 with tab1:
     st.header("🔴 Live Multi-Timeframe Analysis")
     
-    # Status indicator
     if st.session_state.bot_running:
         st.markdown("<div style='background-color: #28a745; color: white; padding: 10px; border-radius: 5px; text-align: center;'><h3>🟢 SYSTEM ACTIVE - Monitoring Markets</h3></div>", unsafe_allow_html=True)
     else:
-        st.markdown("<div style='background-color: #dc3545; color: white; padding: 10px; border-radius: 5px; text-align: center;'><h3> SYSTEM INACTIVE - Click START to begin</h3></div>", unsafe_allow_html=True)
+        st.markdown("<div style='background-color: #dc3545; color: white; padding: 10px; border-radius: 5px; text-align: center;'><h3>⚪ SYSTEM INACTIVE - Click START to begin</h3></div>", unsafe_allow_html=True)
     
-    # Manual analysis button
     if st.button("🔍 Run Manual Analysis Now", type="secondary", disabled=st.session_state.bot_running):
         progress_bar = st.progress(0)
         results_container = st.container()
@@ -678,11 +669,33 @@ with tab1:
                 result = analyze_symbol_premium(symbol)
                 
                 if result and 'error' not in result:
-                    # ONLY show HIGH confidence + score >= 90
+                    # STRICT FILTER: Only HIGH confidence + score >= 90
                     if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= 90:
-                        with results_container:
+                        
+                        # ─── ANTI-SPAM / COOLDOWN CHECK ───
+                        is_repeat = False
+                        current_time = datetime.now()
+                        
+                        if symbol in st.session_state.active_signals:
+                            last_sig = st.session_state.active_signals[symbol]
+                            time_diff_hours = (current_time - last_sig['timestamp']).total_seconds() / 3600
+                            entry_price = result.get('entry', 0)
+                            last_entry = last_sig['entry']
+                            
+                            # Block if: Same direction AND price is within 0.5% AND less than 4 hours have passed
+                            if (last_sig['direction'] == result.get('signal') and 
+                                entry_price > 0 and last_entry > 0 and
+                                abs(last_entry - entry_price) / entry_price < 0.005 and 
+                                time_diff_hours < 1.0):
+                                is_repeat = True
+                        
+                        if is_repeat:
+                            last_time = st.session_state.active_signals[symbol]['timestamp'].strftime('%H:%M')
+                            st.info(f"⏸️ **{symbol}**: Setup already active since {last_time}. Waiting for execution or structural invalidation. No duplicate signals.")
+                        else:
+                            # ✅ NEW VALID SIGNAL OR OPPOSITE REVERSAL
                             sig_color = "🟢" if result.get('signal') == "BUY" else "🔴"
-                            st.markdown(f"### {sig_color} {result['symbol']} - {result.get('signal')} SIGNAL")
+                            st.markdown(f"### {sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')}")
                             
                             col1, col2, col3, col4 = st.columns(4)
                             col1.metric("Bias", result.get('bias', 'N/A'))
@@ -693,18 +706,25 @@ with tab1:
                             st.info(f"**Entry:** {result.get('entry')} | **SL:** {result.get('stop_loss')} | **TP:** {result.get('take_profit')}")
                             st.write(f"**Reasoning:** {result.get('reasoning')}")
                             
-                            # Add to history
-                            result['analyzed_at'] = datetime.now()
+                            # 1. Update active signal tracker
+                            st.session_state.active_signals[symbol] = {
+                                'direction': result.get('signal'),
+                                'entry': result.get('entry', 0),
+                                'timestamp': current_time
+                            }
+                            
+                            # 2. Add to history
+                            result['analyzed_at'] = current_time
                             st.session_state.signal_history.append(result)
                             
-                            # Send to Telegram
+                            # 3. Send to Telegram
                             telegram_msg = format_signal_for_telegram(result)
                             if send_telegram_message(telegram_msg):
                                 st.success("✅ Signal sent to Telegram")
                             
                             st.markdown("---")
                     else:
-                        st.info(f"⚪ {symbol}: Score {result.get('confluence_score', 0)}/100 - Confidence {result.get('confidence', 'N/A')} - **WAITING FOR BETTER SETUP**")
+                        st.info(f"⚪ **{symbol}**: Score {result.get('confluence_score', 0)}/100 - Confidence {result.get('confidence', 'N/A')} - **WAITING FOR BETTER SETUP**")
                 else:
                     st.error(f"❌ Error analyzing {symbol}: {result.get('error', 'Unknown error')}")
             
@@ -726,15 +746,44 @@ with tab1:
                 if result and 'error' not in result:
                     # STRICT FILTER: Only HIGH confidence + score >= 90
                     if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= 90:
-                        sig_color = "🟢" if result.get('signal') == "BUY" else "🔴"
-                        st.success(f"{sig_color} **{result['symbol']}** - {result.get('signal')} | Score: {result.get('confluence_score')}/100 | Entry: {result.get('entry')}")
                         
-                        result['analyzed_at'] = datetime.now()
-                        st.session_state.signal_history.append(result)
+                        # ─── ANTI-SPAM / COOLDOWN CHECK (Auto-Run) ───
+                        is_repeat = False
+                        current_time = datetime.now()
                         
-                        # Send to Telegram
-                        telegram_msg = format_signal_for_telegram(result)
-                        send_telegram_message(telegram_msg)
+                        if symbol in st.session_state.active_signals:
+                            last_sig = st.session_state.active_signals[symbol]
+                            time_diff_hours = (current_time - last_sig['timestamp']).total_seconds() / 3600
+                            entry_price = result.get('entry', 0)
+                            last_entry = last_sig['entry']
+                            
+                            if (last_sig['direction'] == result.get('signal') and 
+                                entry_price > 0 and last_entry > 0 and
+                                abs(last_entry - entry_price) / entry_price < 0.005 and 
+                                time_diff_hours < 4.0):
+                                is_repeat = True
+                        
+                        if is_repeat:
+                            last_time = st.session_state.active_signals[symbol]['timestamp'].strftime('%H:%M')
+                            st.info(f"⏸️ **{symbol}**: Setup already active since {last_time}. Waiting for execution or structural invalidation.")
+                        else:
+                            sig_color = "🟢" if result.get('signal') == "BUY" else "🔴"
+                            st.success(f"{sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')} | Score: {result.get('confluence_score')}/100 | Entry: {result.get('entry')}")
+                            
+                            # 1. Update active signal tracker
+                            st.session_state.active_signals[symbol] = {
+                                'direction': result.get('signal'),
+                                'entry': result.get('entry', 0),
+                                'timestamp': current_time
+                            }
+                            
+                            # 2. Add to history
+                            result['analyzed_at'] = current_time
+                            st.session_state.signal_history.append(result)
+                            
+                            # 3. Send to Telegram
+                            telegram_msg = format_signal_for_telegram(result)
+                            send_telegram_message(telegram_msg)
                 
                 progress_bar.progress((i + 1) / len(selected_symbols))
             
@@ -743,7 +792,6 @@ with tab1:
             st.session_state.next_check_time = datetime.now() + timedelta(minutes=check_interval)
             st.rerun()
         
-        # Show countdown
         if st.session_state.next_check_time:
             time_left = (st.session_state.next_check_time - datetime.now()).total_seconds()
             if time_left > 0:
@@ -753,9 +801,8 @@ with tab2:
     st.header("📜 Premium Signal History")
     
     if len(st.session_state.signal_history) == 0:
-        st.info(" No high-quality signals generated yet. Only signals with HIGH confidence and score ≥90 are shown.")
+        st.info("📭 No high-quality signals generated yet. Only signals with HIGH confidence and score ≥90 are shown.")
     else:
-        # Filter for only HIGH confidence + score >= 90
         premium_signals = [s for s in st.session_state.signal_history 
                           if s.get('confidence') == 'HIGH' and s.get('confluence_score', 0) >= 90]
         
@@ -822,11 +869,12 @@ with tab4:
     - Minimum Confidence: **HIGH**
     - Minimum Confluence Score: **90/100**
     - Minimum R:R Ratio: **1:2.5**
+    - **Anti-Spam:** Blocks duplicate signals within 0.5% price range for 4 hours.
     
     Only signals meeting ALL criteria will be generated and sent to Telegram.
     """)
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
-    time.sleep(30)  # Check every 30 seconds
+    time.sleep(30)
     st.rerun()
