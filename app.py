@@ -33,6 +33,8 @@ if 'active_signals' not in st.session_state:
     st.session_state.active_signals = {}
 if 'app_notifications' not in st.session_state:
     st.session_state.app_notifications = []
+if 'rate_limit_hit' not in st.session_state:
+    st.session_state.rate_limit_hit = False
 
 # ── API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
@@ -44,20 +46,19 @@ if MT5_ENABLED:
     MT5_ACCOUNT = st.sidebar.text_input("MT5 Account Number", "")
     MT5_PASSWORD = st.sidebar.text_input("MT5 Password", type="password")
     MT5_SERVER = st.sidebar.text_input("MT5 Server", "")
-    MT5_LOT_SIZE = st.sidebar.number_input("Lot Size", value=0.01, min_value=0.01, max_value=100.0)
+    MT5_LOT_SIZE = st.sidebar.number_input("Lot Size per Trade", value=0.01, min_value=0.01, max_value=100.0, step=0.01)
+    MT5_NUM_TRADES = st.sidebar.number_input("Number of Trades to Execute", value=1, min_value=1, max_value=10, step=1)
 
-# Symbols to monitor
-SYMBOLS = ['XAUUSD', 'BTCUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'US30', 'USOIL']
+# Symbols to monitor (Reduced to save tokens)
+SYMBOLS = ['XAUUSD', 'USOIL']
 
 # ── YFinance Symbol Map ───────────────────────────────────────────────────────
 YFINANCE_MAP = {
-    'XAUUSD': 'GC=F', 'BTCUSD': 'BTC-USD', 'EURUSD': 'EURUSD=X',
-    'GBPUSD': 'GBPUSD=X', 'USDJPY': 'JPY=X', 'US30': '^DJI', 'USOIL': 'CL=F',
+    'XAUUSD': 'GC=F', 'USOIL': 'CL=F',
 }
 
 # ── Helper: Add Notification ──────────────────────────────────────────────────
 def add_notification(note_type: str, message: str):
-    """Adds a timestamped notification to the session state (max 100 kept)"""
     st.session_state.app_notifications.append({
         'time': datetime.now().strftime('%H:%M:%S'),
         'type': note_type,
@@ -299,7 +300,7 @@ def detect_liquidity_sweeps(df):
     
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt (FIXED TP & WICK LOGIC) ────────────────────────
+# ── Premium AI Analysis Prompt (FIXED MATH & VOLUME LOGIC) ────────────────────
 PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
@@ -314,35 +315,36 @@ HIGH IMPACT NEWS (next 24h):
 ═══════════════════════════════════════════════════════════════════════════════
 MANDATORY ANALYSIS REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════════════════
-1. **INTRA-CANDLE PRECISION (STRICT WICK LOGIC)**:
+1. **INTRA-CANDLE PRECISION (STRICT WICK & VOLUME LOGIC)**:
    - Upper wick on a BEARISH candle = Bearish rejection (VALID for SELL).
-   - Lower wick on a BEARISH candle = Bullish absorption/rejection (INVALID for SELL, indicates buyer presence).
+   - Lower wick on a BEARISH candle = Bullish absorption (INVALID for SELL).
    - Reverse logic for BULLISH candles.
-   - Volume Divergence: Strong candle body + decreasing volume = Exhaustion/Trap. LOWER THE SCORE SIGNIFICANTLY.
+   - VOLUME DIVERGENCE TRAP: A strong candle body (>70%) combined with DECREASING volume is an exhaustion trap. YOU MUST LOWER THE SCORE SIGNIFICANTLY AND REJECT THE SIGNAL.
 
 2. **MULTI-TIMEFRAME CONFLUENCE**: H4/H1 for macro bias, M15 for structural zones. REQUIRE minimum 3 timeframes aligned.
 
 3. **SMC ELEMENTS**: Identify BOS/CHoCH, liquidity sweeps, Order Blocks, and FVGs.
 
-4. **RISK MANAGEMENT & TP CALCULATION (STRICT)**:
-   - TP1 MUST be a minimum 1:2 Risk:Reward ratio from your calculated Entry.
-   - TP1 MUST target the nearest 'Recent Swing Lows' (for SELL) or 'Recent Swing Highs' (for BUY) explicitly provided in the data.
-   - TP2 MUST target the next major HTF liquidity pool (next Swing High/Low or unmitigated FVG).
-   - DO NOT hallucinate price levels. Use the exact 'Swing Highs/Lows' provided in the data to set TP.
+4. **RISK MANAGEMENT & TP CALCULATION (STRICT MATHEMATICAL RULES)**:
+   - For a BUY signal: Entry MUST be strictly LESS than TP1 and TP2. Stop Loss (SL) MUST be strictly LESS than Entry.
+   - For a SELL signal: Entry MUST be strictly GREATER than TP1 and TP2. Stop Loss (SL) MUST be strictly GREATER than Entry.
+   - TP1 MUST target the nearest 'Recent Swing Highs' (for BUY) or 'Recent Swing Lows' (for SELL) explicitly provided in the data.
+   - SL MUST be placed below the recent Swing Low (for BUY) or above the recent Swing High (for SELL).
+   - DO NOT hallucinate price levels. Use the exact 'Swing Highs/Lows' provided.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
 ═══════════════════════════════════════════════════════════════════════════════
-**HIGH CONFIDENCE (Score 85-100)**: 4-5 timeframes aligned, Clear BOS + CHoCH, Valid wick rejection (e.g., upper wick on bearish), Entry at STRONG OB/FVG, R:R ≥ 1:2.
+**HIGH CONFIDENCE (Score 85-100)**: 4-5 timeframes aligned, Clear BOS + CHoCH, Valid wick rejection, Entry at STRONG OB/FVG, R:R ≥ 1:2, NO volume divergence traps.
 **MEDIUM CONFIDENCE (Score 70-84)**: 3 timeframes aligned, BOS or CHoCH present, Moderate zone, R:R ≥ 1:2.
-**LOW CONFIDENCE (Score <70)**: Choppy market, contradictory wick/volume signals, poor R:R, or high-impact news imminent.
+**LOW CONFIDENCE (Score <70)**: Choppy market, strong body with decreasing volume (exhaustion trap), contradictory wick/volume signals, poor R:R, or high-impact news imminent.
 
 ═══════════════════════════════════════════════════════════════════════════════
 YOUR TASK:
 ═══════════════════════════════════════════════════════════════════════════════
-1. Analyze intra-candle data FIRST. Reject if wick/volume logic contradicts the direction.
+1. Analyze intra-candle data FIRST. Reject immediately if volume divergence or contradictory wicks are present.
 2. Determine H4/H1 bias. Find M15 zones. 
-3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows.
+3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity (BUY: TP > Entry > SL).
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
 OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
@@ -368,7 +370,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
   "take_profit": [0.00, 0.00],
   "rr_ratio": 0.00,
   "reasoning": "Detailed explanation citing SPECIFIC intra-candle patterns, multi-TF confluence, and structural levels",
-  "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors or contradictory wick/volume logic",
+  "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors, contradictory wick/volume logic, or invalid math",
   "news_impact": "Analysis if news approaching"
 }}
 """
@@ -384,7 +386,6 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # Switched to 8B Instant: Much higher free tier limits, faster, and uses fewer tokens
     payload = {
         "model": "llama-3.1-8b-instant",  
         "messages": [
@@ -398,11 +399,10 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
     res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
     res_data = res.json()
     
-    # Graceful Rate Limit Handling
     if 'error' in res_data:
         err_msg = res_data['error'].get('message', '')
         if 'Rate limit reached' in err_msg or '429' in str(res_data.get('error', {}).get('code', '')):
-            raise ValueError("RATE_LIMIT")  # Special flag for graceful handling
+            raise ValueError("RATE_LIMIT")
         raise ValueError(f"Groq API Error: {err_msg}")
     
     content = res_data['choices'][0]['message'].get('content')
@@ -415,17 +415,42 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
     
     return json.loads(content.strip())
 
+# ── Mathematical Validation Guardrail ─────────────────────────────────────────
+def validate_signal_math(analysis):
+    """Ensures the AI's TP and SL mathematically make sense for the signal direction."""
+    signal = analysis.get('signal')
+    entry = analysis.get('entry', 0)
+    sl = analysis.get('stop_loss', 0)
+    tp_list = analysis.get('take_profit', [])
+    tp1 = tp_list[0] if len(tp_list) > 0 else 0
+    
+    if not entry or not sl or not tp1:
+        return False, "Missing entry, SL, or TP values."
+    
+    if signal == "BUY":
+        if tp1 <= entry:
+            return False, f"Invalid Math: For BUY, TP1 ({tp1}) MUST be > Entry ({entry})."
+        if sl >= entry:
+            return False, f"Invalid Math: For BUY, SL ({sl}) MUST be < Entry ({entry})."
+    elif signal == "SELL":
+        if tp1 >= entry:
+            return False, f"Invalid Math: For SELL, TP1 ({tp1}) MUST be < Entry ({entry})."
+        if sl <= entry:
+            return False, f"Invalid Math: For SELL, SL ({sl}) MUST be > Entry ({entry})."
+            
+    return True, "Valid"
+
 # ── MT5 Execution Functions ───────────────────────────────────────────────────
-def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
+def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size, num_trades=1):
     if not MT5_ENABLED:
         return {"error": "MT5 not enabled"}
     if not MT5_AVAILABLE:
         return {"error": "MT5 requires Windows. Use Windows VPS for auto-execution."}
     try:
         if not mt5.initialize():
-            return {"error": f"MT5 init failed"}
+            return {"error": "MT5 init failed"}
         if not mt5.login(login=int(MT5_ACCOUNT), password=MT5_PASSWORD, server=MT5_SERVER):
-            return {"error": f"MT5 login failed"}
+            return {"error": "MT5 login failed"}
         
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
@@ -434,23 +459,36 @@ def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size):
         trade_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
         tick = mt5.symbol_info_tick(symbol)
         
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
-            "volume": float(lot_size),
-            "type": trade_type,
-            "price": tick.ask if direction == "BUY" else tick.bid,
-            "sl": sl,
-            "tp": tp,
-            "deviation": 10,
-            "magic": 234000,
-            "comment": "Der-AI Signal",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
-        }
+        success_count = 0
+        errors = []
         
-        result = mt5.order_send(request)
-        return {"success": result.retcode == mt5.TRADE_RETCODE_DONE, "order": result._asdict() if result else None}
+        for i in range(int(num_trades)):
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": float(lot_size),
+                "type": trade_type,
+                "price": tick.ask if direction == "BUY" else tick.bid,
+                "sl": sl,
+                "tp": tp,
+                "deviation": 10,
+                "magic": 234000,
+                "comment": f"Der-AI {i+1}/{num_trades}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            
+            result = mt5.order_send(request)
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                success_count += 1
+            else:
+                errors.append(f"Trade {i+1} failed: {result.comment}")
+        
+        if success_count > 0:
+            return {"success": True, "executed": success_count, "total": int(num_trades), "errors": errors}
+        else:
+            return {"error": "All trades failed. " + " | ".join(errors)}
+            
     except Exception as e:
         return {"error": str(e)}
 
@@ -459,24 +497,22 @@ def analyze_symbol_premium(symbol):
     try:
         mtf_data = fetch_mtf_data(symbol)
         if not mtf_data:
-            return None  # Critical fix: return None for empty data
+            return None
         
         news = get_high_impact_news()
         analysis_summary, intra_candle_data = [], []
         
-        # Deep multi-timeframe analysis (Token-Optimized)
         for tf, df in mtf_data.items():
             if df.empty:
                 continue
             
-            # Only do deep analysis on key timeframes to save 60% of tokens
             is_key_tf = tf in ['H1', 'M15']
             
             bos, choch = detect_bos_choch(df)
             obs = detect_order_blocks(df) if is_key_tf else []
             fvgs = detect_fvg(df) if is_key_tf else []
             sweeps = detect_liquidity_sweeps(df) if is_key_tf else []
-            swings = find_swings(df)  # Get exact swing levels for TP calculation
+            swings = find_swings(df)
             
             if len(df) > 50:
                 ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
@@ -494,17 +530,14 @@ def analyze_symbol_premium(symbol):
                 swing_highs_str = ', '.join([f"{h:.5f}" for h in swings['recent_swing_highs']]) if swings['recent_swing_highs'] else 'None'
                 swing_lows_str = ', '.join([f"{l:.5f}" for l in swings['recent_swing_lows']]) if swings['recent_swing_lows'] else 'None'
                 
-                # NOW INCLUDES SWING HIGHS/LOWS FOR EXACT TP TARGETING
                 analysis_summary.append(f"{tf} (KEY): Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos} | OBs: {ob_str} | FVGs: {fvg_str} | Sweeps: {sweep_str} | Swing Highs: {swing_highs_str} | Swing Lows: {swing_lows_str}")
                 
-                # Only send intra-candle data for key timeframes
                 candle_analysis = analyze_candle_structure(df)
                 if candle_analysis:
                     recent = candle_analysis[-2:]
                     c_str = [f"{c['candle_type']} {c['pattern']} (Body:{c['body_ratio']*100:.0f}%)" for c in recent]
                     intra_candle_data.append(f"{tf} Candles: {' | '.join(c_str)}")
             else:
-                # Summarize other timeframes in 1 line to save tokens
                 analysis_summary.append(f"{tf}: Price: {current_price:.5f} | EMA20: {ema20:.5f} | RSI: {rsi:.1f} | BOS: {bos}")
         
         news_text = "\n".join([f"- {n['time']} {n['currency']}: {n['event']} (Impact: {n['impact']})" for n in news[:5]]) if news else "No high-impact news today"
@@ -566,8 +599,8 @@ st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Ale
 
 # Sidebar Configuration
 st.sidebar.header("⚙️ System Configuration")
-selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=15)
+selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
 
 # NEW: Sensitivity Slider
 st.sidebar.markdown("---")
@@ -585,6 +618,7 @@ with col1:
     if st.button("▶️ START", type="primary", use_container_width=True):
         st.session_state.bot_running = True
         st.session_state.next_check_time = datetime.now()
+        st.session_state.rate_limit_hit = False
         add_notification('info', "✅ Bot started. Monitoring markets.")
         st.rerun()
 with col2:
@@ -600,6 +634,7 @@ with col3:
         st.session_state.bot_running = False
         st.session_state.last_analysis_time = None
         st.session_state.next_check_time = None
+        st.session_state.rate_limit_hit = False
         add_notification('info', "🗑️ System memory cleared.")
         st.rerun()
 
@@ -636,11 +671,11 @@ with tab1:
     else:
         st.markdown("<div style='background-color: #dc3545; color: white; padding: 10px; border-radius: 5px; text-align: center;'><h3>⚪ SYSTEM INACTIVE - Click START to begin</h3></div>", unsafe_allow_html=True)
     
-    # Helper function to process a single symbol's result
     def process_symbol_result(result, symbol, is_auto=False):
-        # 1. Handle Rate Limits Gracefully
+        # 1. Handle Rate Limits Gracefully with Early Exit
         if result and isinstance(result, dict) and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
-            msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. The app will automatically resume when the limit resets (~25 mins)."
+            st.session_state.rate_limit_hit = True
+            msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. Pausing all analysis until limit resets."
             if not is_auto: st.warning(msg)
             add_notification('warning', msg)
             return
@@ -652,9 +687,17 @@ with tab1:
             return
 
         # 3. Process valid results
-        # STRICT FILTER: Confidence must be HIGH, Score must meet sensitivity threshold
         min_score = sensitivity
         if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= min_score:
+            
+            # 4. PYTHON-SIDE MATHEMATICAL VALIDATION (The Ultimate Guardrail)
+            is_valid_math, math_reason = validate_signal_math(result)
+            if not is_valid_math:
+                msg = f"⚪ **{symbol}**: Signal Rejected due to Invalid Math. AI Reason: {math_reason}"
+                if not is_auto: st.info(msg)
+                add_notification('warning', msg)
+                return
+
             is_repeat = False
             current_time = datetime.now()
             
@@ -664,7 +707,6 @@ with tab1:
                 entry_price = result.get('entry', 0)
                 last_entry = last_sig['entry']
                 
-                # Cooldown: 15 minutes, Price proximity: 1%
                 if (last_sig['direction'] == result.get('signal') and 
                     entry_price > 0 and last_entry > 0 and
                     abs(last_entry - entry_price) / entry_price < 0.01 and 
@@ -677,7 +719,6 @@ with tab1:
                 if not is_auto: st.info(msg)
                 add_notification('info', msg)
             else:
-                # ✅ NEW VALID SIGNAL OR OPPOSITE REVERSAL
                 sig_color = "🟢" if result.get('signal') == "BUY" else "🔴"
                 if not is_auto: st.markdown(f"### {sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')}")
                 else: st.success(f"{sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')} | Score: {result.get('confluence_score')}/100")
@@ -691,18 +732,15 @@ with tab1:
                     st.info(f"**Entry:** {result.get('entry')} | **SL:** {result.get('stop_loss')} | **TP:** {result.get('take_profit')}")
                     st.write(f"**Reasoning:** {result.get('reasoning')}")
                 
-                # 1. Update active signal tracker
                 st.session_state.active_signals[symbol] = {
                     'direction': result.get('signal'),
                     'entry': result.get('entry', 0),
                     'timestamp': current_time
                 }
                 
-                # 2. Add to history
                 result['analyzed_at'] = current_time
                 st.session_state.signal_history.append(result)
                 
-                # 3. Send to Telegram
                 telegram_msg = format_signal_for_telegram(result)
                 if send_telegram_message(telegram_msg):
                     if not is_auto: st.success("✅ Signal sent to Telegram")
@@ -710,7 +748,6 @@ with tab1:
                 add_notification('success', f"✅ **{symbol}**: New {result.get('signal')} signal generated (Score: {result.get('confluence_score')}/100)")
                 if not is_auto: st.markdown("---")
         else:
-            # REJECTED SIGNAL
             ai_reason = result.get('rejection_reason', 'Insufficient confluence factors met or contradictory wick/volume logic.')
             msg = f"⚪ **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
             if not is_auto: st.info(msg)
@@ -718,7 +755,13 @@ with tab1:
 
     if st.button("🔍 Run Manual Analysis Now", type="secondary", disabled=st.session_state.bot_running):
         progress_bar = st.progress(0)
+        st.session_state.rate_limit_hit = False
+        
         for i, symbol in enumerate(selected_symbols):
+            if st.session_state.get('rate_limit_hit', False):
+                st.warning("⏳ Daily token limit reached. Stopping analysis cycle.")
+                break
+                
             with st.spinner(f"Analyzing {symbol}..."):
                 result = analyze_symbol_premium(symbol)
                 process_symbol_result(result, symbol, is_auto=False)
@@ -732,7 +775,14 @@ with tab1:
         if st.session_state.next_check_time and datetime.now() >= st.session_state.next_check_time:
             st.info("🔄 Running scheduled analysis...")
             progress_bar = st.progress(0)
+            
+            st.session_state.rate_limit_hit = False 
+            
             for i, symbol in enumerate(selected_symbols):
+                if st.session_state.get('rate_limit_hit', False):
+                    st.warning("⏳ Daily token limit reached. Stopping analysis cycle to save resources.")
+                    break
+                
                 result = analyze_symbol_premium(symbol)
                 process_symbol_result(result, symbol, is_auto=True)
                 progress_bar.progress((i + 1) / len(selected_symbols))
@@ -752,7 +802,6 @@ with tab2:
         
         for i, signal in enumerate(reversed(premium_signals)):
             with st.expander(f"{'🟢' if signal.get('signal') == 'BUY' else '🔴'} {signal['symbol']} - {signal.get('signal')} | Score: {signal.get('confluence_score')}/100 | {signal.get('timestamp', 'N/A')}", expanded=False):
-                # Signal details
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Entry", signal.get('entry', 'N/A'))
                 col2.metric("Stop Loss", signal.get('stop_loss', 'N/A'))
@@ -764,23 +813,23 @@ with tab2:
                 
                 # Add MT5 execution button if enabled
                 if MT5_ENABLED:
-                    if st.button("⚡ Execute on MT5", key=f"exec_{i}", use_container_width=True):
+                    if st.button(f"⚡ Execute {MT5_NUM_TRADES} trade(s) on MT5", key=f"exec_{i}", use_container_width=True):
                         exec_result = execute_mt5_trade(
                             symbol=signal['symbol'],
                             direction=signal.get('signal'),
                             entry=signal.get('entry'),
                             sl=signal.get('stop_loss'),
                             tp=signal.get('take_profit', [None])[0] if signal.get('take_profit') else None,
-                            lot_size=MT5_LOT_SIZE
+                            lot_size=MT5_LOT_SIZE,
+                            num_trades=MT5_NUM_TRADES
                         )
                         if exec_result.get('success'):
-                            st.success("✅ Trade executed on MT5!")
-                            add_notification('success', f"✅ **{signal['symbol']}**: Trade executed on MT5")
+                            st.success(f"✅ {exec_result.get('executed')}/{exec_result.get('total')} trades executed on MT5!")
+                            add_notification('success', f"✅ **{signal['symbol']}**: {exec_result.get('executed')}/{exec_result.get('total')} trades executed on MT5")
                         else:
                             st.error(f"❌ Execution failed: {exec_result.get('error', 'Unknown error')}")
                             add_notification('warning', f"❌ **{signal['symbol']}**: Execution failed - {exec_result.get('error', 'Unknown error')}")
                 
-                # Intra-candle analysis
                 if 'intra_candle_analysis' in signal:
                     st.write("**Intra-Candle Analysis:**")
                     st.json(signal['intra_candle_analysis'])
@@ -820,7 +869,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.5**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.5**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
