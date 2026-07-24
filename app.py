@@ -12,10 +12,10 @@ try:
 except ImportError:
     MT5_AVAILABLE = False
 
-# ── Page Config ───────────────────────────────────────────────────────────────
+# ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Der-AI | Professional Trading System",
-    page_icon="🎯",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -50,7 +50,7 @@ MT5_SERVER_DEFAULT = st.secrets.get("MT5_SERVER", query_params.get("mt5_server",
 MT5_LOT_SIZE_DEFAULT = float(st.secrets.get("MT5_LOT_SIZE", query_params.get("mt5_lot_size", "0.01")))
 MT5_NUM_TRADES_DEFAULT = int(st.secrets.get("MT5_NUM_TRADES", query_params.get("mt5_num_trades", "1")))
 
-# ── API Keys & Config ─────────────────────────────────────────────────────────
+# ─ API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
@@ -88,7 +88,7 @@ if MT5_ENABLED:
         st.session_state.mt5_num_trades = mt5_num_input
         st.query_params["mt5_num_trades"] = str(mt5_num_input)
     
-    if st.sidebar.button("💾 Save Credentials to Secrets"):
+    if st.sidebar.button(" Save Credentials to Secrets"):
         st.sidebar.info("Go to Streamlit Dashboard → App → Settings → Secrets and add: MT5_ACCOUNT, MT5_SERVER, MT5_LOT_SIZE, MT5_NUM_TRADES. (Never store passwords in Secrets).")
 
 MT5_ACCOUNT = st.session_state.mt5_account
@@ -127,7 +127,7 @@ def get_high_impact_news():
     except Exception:
         return []
 
-# ── Multi-Timeframe Data Fetching ─────────────────────────────────────────────
+# ─ Multi-Timeframe Data Fetching ─────────────────────────────────────────────
 def fetch_mtf_data(symbol):
     ticker = YFINANCE_MAP.get(symbol, symbol)
     data = {}
@@ -171,7 +171,7 @@ def analyze_candle_structure(df):
         analysis.append({'time': df.index[i], 'candle_type': candle_type, 'pattern': pattern, 'body_ratio': body_ratio, 'upper_wick_ratio': upper_wick_ratio, 'lower_wick_ratio': lower_wick_ratio, 'price': candle['Close'], 'volume': candle['Volume']})
     return analysis[-5:]
 
-# ── Advanced SMC Detection ────────────────────────────────────────────────────
+# ── Advanced SMC Detection ───────────────────────────────────────────────────
 def detect_bos_choch(df):
     if len(df) < 10: return None, None
     highs = df['High'].rolling(window=5).max()
@@ -295,7 +295,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 }}
 """
 
-# ── AI Analysis Function (WITH ANTI-BURST & AUTO-RETRY) ───────────────────────
+# ── AI Analysis Function (WITH SILENT 60-SECOND BACKOFF RETRY) ────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, retry_count: int = 0) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
@@ -303,9 +303,6 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     
     if not api_key or not api_key.startswith("gsk_"):
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "Missing or invalid Groq API Key."}
-
-    # FIX: 1-second cool-down to prevent Groq from flagging this as a "burst" request
-    time.sleep(1)
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -321,8 +318,14 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     try:
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
         
+        # FIX: If Groq says "Too Many Requests", wait 60 seconds silently and retry up to 2 times.
         if res.status_code == 429:
-            return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
+            if retry_count < 2:
+                print(f"Groq rate limit hit. Waiting 60 seconds before silent retry {retry_count + 1}...")
+                time.sleep(60)
+                return call_gpt(system_prompt, user_content, max_tokens, retry_count + 1)
+            else:
+                return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
             
         res.raise_for_status()
         res_data = res.json()
@@ -330,6 +333,9 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
         if 'error' in res_data:
             err_msg = res_data['error'].get('message', '')
             if 'Rate limit reached' in err_msg or '429' in str(res_data.get('error', {}).get('code', '')):
+                if retry_count < 2:
+                    time.sleep(60)
+                    return call_gpt(system_prompt, user_content, max_tokens, retry_count + 1)
                 return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
             return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Groq API Error: {err_msg}"}
         
@@ -343,30 +349,29 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
         content = re.sub(r'\s*```$', '', content)
         content = content.strip()
         
-        # Extract only the JSON object if there's trailing text
         match = re.search(r'\{.*\}', content, re.DOTALL)
         if match:
             content = match.group(0)
             
-        # Fix trailing commas
         content = re.sub(r',\s*([}\]])', r'\1', content)
         
         return json.loads(content)
         
     except json.JSONDecodeError as e:
-        # AUTO-RETRY: If JSON fails, try ONE more time. This fixes 95% of LLM hiccups.
         if retry_count < 1:
             print("JSON parsing failed, attempting one automatic retry...")
             return call_gpt(system_prompt, user_content, max_tokens, retry_count=1)
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"AI JSON parsing failed after retry: {str(e)}"}
     except requests.exceptions.RequestException as e:
         if hasattr(e, 'response') and e.response is not None and e.response.status_code == 429:
-            return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
+            if retry_count < 2:
+                time.sleep(60)
+                return call_gpt(system_prompt, user_content, max_tokens, retry_count + 1)
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Network error: {str(e)}"}
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
-# ── Mathematical Validation Guardrail ─────────────────────────────────────────
+# ── Mathematical Validation Guardrail ────────────────────────────────────────
 def validate_signal_math(analysis):
     signal = analysis.get('signal')
     entry = analysis.get('entry', 0)
@@ -491,10 +496,10 @@ def analyze_symbol_premium(symbol):
     except Exception as e:
         return {"error": str(e)}
 
-# ── Signal Formatter for Telegram ────────────────────────────────────────────
+# ── Signal Formatter for Telegram ───────────────────────────────────────────
 def format_signal_for_telegram(analysis):
     if 'error' in analysis: return f"❌ Error: {analysis['error']}"
-    emoji = "🟢" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
+    emoji = "" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
     return f"""
 {emoji} <b>DER-AI PREMIUM SIGNAL</b> {emoji}
 📊 <b>{analysis['symbol']}</b> - {analysis.get('signal', 'WAIT')} | ⏰ {analysis.get('timestamp', 'N/A')}
@@ -503,7 +508,7 @@ def format_signal_for_telegram(analysis):
 🎯 <b>TP1:</b> {analysis.get('take_profit', ['N/A'])[0] if analysis.get('take_profit') else 'N/A'} | 🎯 <b>TP2:</b> {analysis.get('take_profit', ['N/A', 'N/A'])[1] if len(analysis.get('take_profit', [])) > 1 else 'N/A'}
 🔍 <b>CONFLUENCE:</b> {', '.join(analysis.get('timeframes_aligned', []))} | OBs: {len(analysis.get('order_blocks', []))} | FVGs: {len(analysis.get('fvg_zones', []))} | Sweeps: {len(analysis.get('liquidity_sweeps', []))}
 🧠 <b>ANALYSIS:</b> {analysis.get('reasoning', 'N/A')}
-{f"📰 <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
+{f" <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
 <i>Der-AI Professional Trading System</i>
     """.strip()
 
@@ -553,17 +558,17 @@ if st.session_state.bot_running:
         else:
             st.sidebar.info("⏱️ Checking now...")
 else:
-    st.sidebar.warning("⏸️ **BOT STOPPED**")
+    st.sidebar.warning("️ **BOT STOPPED**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 Session Stats")
 st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", " Signal History", "🔔 Notifications", " News Calendar", "⚙️ Settings"])
 
 with tab1:
-    st.header("🔴 Live Multi-Timeframe Analysis")
+    st.header(" Live Multi-Timeframe Analysis")
     
     if st.session_state.bot_running:
         if st.session_state.next_check_time:
@@ -663,7 +668,6 @@ with tab1:
             with st.spinner(f"Analyzing {symbol}..."):
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=False)
             
-            # FIX: Increased delay to 15 seconds to absolutely guarantee no Groq RPM limits are hit
             if i < len(selected_symbols) - 1:
                 time.sleep(15)
                 
@@ -683,7 +687,6 @@ with tab1:
                     break
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=True)
                 
-                # FIX: Increased delay to 15 seconds to absolutely guarantee no Groq RPM limits are hit
                 if i < len(selected_symbols) - 1:
                     time.sleep(15)
                     
