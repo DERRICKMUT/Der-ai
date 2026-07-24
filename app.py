@@ -36,7 +36,7 @@ if 'app_notifications' not in st.session_state:
 if 'rate_limit_hit' not in st.session_state:
     st.session_state.rate_limit_hit = False
 
-# ── Load Persistent Settings (Safe Query Params Handling) ─────────────────────
+# ── Load Persistent Settings ──────────────────────────────────────────────────
 try:
     query_params = {k: v[0] for k, v in st.query_params.to_dict().items()}
 except Exception:
@@ -54,17 +54,11 @@ MT5_NUM_TRADES_DEFAULT = int(st.secrets.get("MT5_NUM_TRADES", query_params.get("
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
-# MT5 Config - Initialize from persistent defaults
-if 'mt5_account' not in st.session_state:
-    st.session_state.mt5_account = MT5_ACCOUNT_DEFAULT
-if 'mt5_password' not in st.session_state:
-    st.session_state.mt5_password = ""
-if 'mt5_server' not in st.session_state:
-    st.session_state.mt5_server = MT5_SERVER_DEFAULT
-if 'mt5_lot_size' not in st.session_state:
-    st.session_state.mt5_lot_size = MT5_LOT_SIZE_DEFAULT
-if 'mt5_num_trades' not in st.session_state:
-    st.session_state.mt5_num_trades = MT5_NUM_TRADES_DEFAULT
+if 'mt5_account' not in st.session_state: st.session_state.mt5_account = MT5_ACCOUNT_DEFAULT
+if 'mt5_password' not in st.session_state: st.session_state.mt5_password = ""
+if 'mt5_server' not in st.session_state: st.session_state.mt5_server = MT5_SERVER_DEFAULT
+if 'mt5_lot_size' not in st.session_state: st.session_state.mt5_lot_size = MT5_LOT_SIZE_DEFAULT
+if 'mt5_num_trades' not in st.session_state: st.session_state.mt5_num_trades = MT5_NUM_TRADES_DEFAULT
 
 MT5_ENABLED = st.sidebar.checkbox("Enable MT5 Auto-Execution", value=False)
 
@@ -95,18 +89,7 @@ if MT5_ENABLED:
         st.query_params["mt5_num_trades"] = str(mt5_num_input)
     
     if st.sidebar.button("💾 Save Credentials to Secrets"):
-        st.sidebar.info("""
-        **To permanently save your credentials:**
-        1. Go to your Streamlit Dashboard → App → Settings → Secrets
-        2. Add these entries:
-        ```toml
-        MT5_ACCOUNT = "your_account_number"
-        MT5_SERVER = "your_server_name"
-        MT5_LOT_SIZE = "0.01"
-        MT5_NUM_TRADES = "1"
-        ```
-        3. Click Save. (Note: Never store passwords in Secrets for security).
-        """)
+        st.sidebar.info("Go to Streamlit Dashboard → App → Settings → Secrets and add: MT5_ACCOUNT, MT5_SERVER, MT5_LOT_SIZE, MT5_NUM_TRADES. (Never store passwords in Secrets).")
 
 MT5_ACCOUNT = st.session_state.mt5_account
 MT5_PASSWORD = st.session_state.mt5_password
@@ -125,11 +108,10 @@ def add_notification(note_type: str, message: str):
 
 # ── Telegram Functions ────────────────────────────────────────────────────────
 def send_telegram_message(message):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
         return True
     except Exception as e:
         print(f"Telegram error: {e}")
@@ -142,8 +124,7 @@ def get_high_impact_news():
         data = res.json()
         today = datetime.now().strftime('%Y-%m-%d')
         return [{'time': e.get('time', ''), 'currency': e.get('country', ''), 'event': e.get('event', ''), 'impact': 'HIGH', 'forecast': e.get('forecast', ''), 'previous': e.get('previous', '')} for e in data if e.get('date') == today and e.get('impact') == '3']
-    except Exception as e:
-        print(f"News fetch error: {e}")
+    except Exception:
         return []
 
 # ── Multi-Timeframe Data Fetching ─────────────────────────────────────────────
@@ -314,7 +295,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 }}
 """
 
-# ── AI Analysis Function (BULLETPROOF - NEVER CRASHES) ───────────────────────
+# ── AI Analysis Function (BULLETPROOF 429 CATCHING) ──────────────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
@@ -331,11 +312,16 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
             {"role": "user", "content": user_content}
         ],
         "max_tokens": max_tokens,
-        "temperature": 0.0, # Lowest temperature for maximum JSON reliability
+        "temperature": 0.0,
     }
     
     try:
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
+        
+        # FIX: Explicitly catch 429 Too Many Requests BEFORE raise_for_status() throws an exception
+        if res.status_code == 429:
+            return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
+            
         res.raise_for_status()
         res_data = res.json()
         
@@ -349,26 +335,21 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
         if not content:
             return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "AI returned empty content."}
         
-        # Aggressive, bulletproof JSON cleaning
         content = content.strip()
         content = re.sub(r'^```(?:json)?\s*', '', content, flags=re.IGNORECASE)
         content = re.sub(r'\s*```$', '', content)
         content = content.strip()
-        content = re.sub(r',\s*([}\]])', r'\1', content) # Remove trailing commas
+        content = re.sub(r',\s*([}\]])', r'\1', content)
         
         return json.loads(content)
         
     except requests.exceptions.RequestException as e:
+        # Fallback catch for any other network issues
+        if hasattr(e, 'response') and e.response is not None and e.response.status_code == 429:
+            return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Network error: {str(e)}"}
     except json.JSONDecodeError as e:
-        print(f"JSON Decode Error: {e}")
-        print(f"Raw AI Output:\n{content[:500]}...") # Truncate for safety
-        return {
-            "signal": "WAIT", 
-            "confluence_score": 0, 
-            "confidence": "LOW", 
-            "rejection_reason": f"AI JSON parsing failed: {e}. The AI did not output valid JSON format."
-        }
+        return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"AI JSON parsing failed: {str(e)}"}
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
@@ -395,20 +376,20 @@ def validate_signal_math(analysis):
     else:
         return False, "Invalid signal direction."
         
-    if risk == 0: return False, "Invalid Math: Risk (Entry to SL distance) cannot be zero."
+    if risk == 0: return False, "Invalid Math: Risk cannot be zero."
         
     actual_rr = reward / risk
     if abs(actual_rr - ai_rr) > 0.5:
-        return False, f"Invalid Math: AI claimed R:R of {ai_rr}, but actual math based on Entry/SL/TP is {actual_rr:.2f}."
+        return False, f"Invalid Math: AI claimed R:R of {ai_rr}, but actual is {actual_rr:.2f}."
     if actual_rr < 2.0:
-        return False, f"Invalid Math: Actual R:R is {actual_rr:.2f}, which is below the minimum 1:2.0 requirement."
+        return False, f"Invalid Math: Actual R:R is {actual_rr:.2f}, below minimum 1:2.0 requirement."
             
     return True, "Valid"
 
 # ── MT5 Execution Functions ───────────────────────────────────────────────────
 def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size, num_trades=1):
     if not MT5_ENABLED: return {"error": "MT5 not enabled"}
-    if not MT5_AVAILABLE: return {"error": "MT5 requires Windows. Use Windows VPS for auto-execution."}
+    if not MT5_AVAILABLE: return {"error": "MT5 requires Windows. Use Windows VPS."}
     try:
         if not mt5.initialize() or not mt5.login(login=int(MT5_ACCOUNT), password=MT5_PASSWORD, server=MT5_SERVER):
             return {"error": "MT5 init/login failed"}
@@ -495,7 +476,6 @@ def analyze_symbol_premium(symbol):
         analysis['analyzed_at'] = datetime.now()
         return analysis
     except Exception as e:
-        print(f"Analysis error for {symbol}: {e}")
         return {"error": str(e)}
 
 # ── Signal Formatter for Telegram ────────────────────────────────────────────
@@ -572,7 +552,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", "📜 Signal His
 with tab1:
     st.header("🔴 Live Multi-Timeframe Analysis")
     
-    # PROMINENT COUNTDOWN TIMER
     if st.session_state.bot_running:
         if st.session_state.next_check_time:
             time_left = (st.session_state.next_check_time - datetime.now()).total_seconds()
@@ -598,7 +577,7 @@ with tab1:
     def process_symbol_result(result, symbol, is_auto=False):
         if result and isinstance(result, dict) and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
             st.session_state.rate_limit_hit = True
-            msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. Pausing all analysis until limit resets."
+            msg = f"⏳ **{symbol}**: Groq rate limit reached. Pausing all analysis until limit resets."
             if not is_auto: st.warning(msg)
             add_notification('warning', msg)
             return
@@ -666,10 +645,15 @@ with tab1:
         st.session_state.rate_limit_hit = False
         for i, symbol in enumerate(selected_symbols):
             if st.session_state.get('rate_limit_hit', False):
-                st.warning("⏳ Daily token limit reached. Stopping analysis cycle.")
+                st.warning("⏳ Rate limit reached. Stopping analysis cycle.")
                 break
             with st.spinner(f"Analyzing {symbol}..."):
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=False)
+            
+            # FIX: Add a 2-second delay between symbols to prevent hitting Groq's Requests Per Minute (RPM) limit
+            if i < len(selected_symbols) - 1:
+                time.sleep(2)
+                
             progress_bar.progress((i + 1) / len(selected_symbols))
         progress_bar.empty()
         st.session_state.last_analysis_time = datetime.now()
@@ -682,9 +666,14 @@ with tab1:
             st.session_state.rate_limit_hit = False 
             for i, symbol in enumerate(selected_symbols):
                 if st.session_state.get('rate_limit_hit', False):
-                    st.warning("⏳ Daily token limit reached. Stopping analysis cycle to save resources.")
+                    st.warning("⏳ Rate limit reached. Stopping analysis cycle to save resources.")
                     break
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=True)
+                
+                # FIX: Add a 2-second delay between symbols to prevent hitting Groq's RPM limit
+                if i < len(selected_symbols) - 1:
+                    time.sleep(2)
+                    
                 progress_bar.progress((i + 1) / len(selected_symbols))
             progress_bar.empty()
             st.session_state.last_analysis_time = datetime.now()
@@ -753,7 +742,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Bulletproof AI:** Gracefully handles any AI JSON errors without crashing.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Rate Limit Protection:** Adds 2-second delays between symbols to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
