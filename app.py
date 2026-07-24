@@ -1,4 +1,4 @@
-import os, json, requests, traceback, base64, time
+import os, json, requests, traceback, base64, time, re
 from datetime import datetime, timezone, timedelta
 import streamlit as st
 import yfinance as yf
@@ -300,7 +300,7 @@ def detect_liquidity_sweeps(df):
     
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt (UPGRADED: EARLY EXPANSION, REVERSAL & TRAPS) ──
+# ── Premium AI Analysis Prompt (FLATTENED JSON FOR 100% RELIABILITY) ─────────
 PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis to detect EARLY EXPANSION and EARLY REVERSAL setups. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
@@ -315,22 +315,12 @@ HIGH IMPACT NEWS (next 24h):
 ═══════════════════════════════════════════════════════════════════════════════
 MANDATORY ANALYSIS REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════════════════
-1. **EARLY REVERSAL DETECTION**: 
-   - Look for HTF liquidity sweeps (taking out previous Swing Highs/Lows) into a key HTF Order Block or FVG.
-   - Confirm with immediate M15/M10 Change of Character (CHoCH) and strong rejection wicks (wick ratio > 60%).
-   - Divergence: Price makes a new extreme, but RSI or Volume does not confirm (exhaustion).
-
-2. **EARLY EXPANSION DETECTION**:
-   - Look for ATR compression (coiling/tight consolidation) followed by a sudden, strong directional candle.
-   - VALIDATION: The expansion candle MUST have INCREASING volume. Strong body + decreasing volume = TRAP/EXHAUSTION (REJECT SIGNAL).
-
-3. **MANIPULATION & TRAP IDENTIFICATION**:
-   - "Spring" (False Breakdown) or "Upthrust" (False Breakout): Price briefly breaks a key level but closes back inside the range with high volume. This is a trap. Bias is the OPPOSITE of the breakout.
-
-4. **PERFECT ZONE ESTABLISHMENT & PRECISE MATH**:
-   - DO NOT guess prices. Use the EXACT 'Swing Highs' and 'Swing Lows' provided in the data.
-   - For BUY: Entry = Current Price or limit at Bullish OB top. SL = Recent Swing Low - small buffer. TP1 = Next Recent Swing High. TP2 = HTF Swing High or minimum 1:2.5 R:R.
-   - For SELL: Entry = Current Price or limit at Bearish OB bottom. SL = Recent Swing High + small buffer. TP1 = Next Recent Swing Low. TP2 = HTF Swing Low or minimum 1:2.5 R:R.
+1. **EARLY REVERSAL DETECTION**: Look for HTF liquidity sweeps into a key HTF Order Block/FVG, confirmed by immediate M15/M10 Change of Character (CHoCH) and strong rejection wicks (wick ratio > 60%).
+2. **EARLY EXPANSION DETECTION**: Look for ATR compression (coiling) followed by a sudden, strong directional candle. VALIDATION: The expansion candle MUST have INCREASING volume. Strong body + decreasing volume = TRAP/EXHAUSTION (REJECT SIGNAL).
+3. **MANIPULATION & TRAPS**: Identify "Springs" (false breakdowns) or "Upthrusts" (false breakouts). If price briefly breaks a key level but closes back inside with high volume, bias is the OPPOSITE of the breakout.
+4. **PERFECT ZONE & PRECISE MATH**: Use the EXACT 'Swing Highs' and 'Swing Lows' provided. 
+   - For BUY: Entry = Current Price or limit at Bullish OB top. SL = Recent Swing Low - buffer. TP1 = Next Recent Swing High. TP2 = HTF Swing High or min 1:2.5 R:R.
+   - For SELL: Entry = Current Price or limit at Bearish OB bottom. SL = Recent Swing High + buffer. TP1 = Next Recent Swing Low. TP2 = HTF Swing Low or min 1:2.5 R:R.
    - MATHEMATICAL RULE: BUY requires TP > Entry > SL. SELL requires TP < Entry < SL.
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -348,19 +338,17 @@ YOUR TASK:
 3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
-OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
+OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax with no trailing commas:
 {{
   "bias": "BULLISH|BEARISH|RANGING",
   "signal": "BUY|SELL|WAIT",
-  "confluence_score": 0-100,
+  "confluence_score": 90,
   "confidence": "HIGH|MEDIUM|LOW",
   "timeframes_aligned": ["H1", "M15"],
-  "intra_candle_analysis": {{
-    "recent_pattern": "description of last 2-3 candles",
-    "wick_rejection": "upper/lower/none with ratios",
-    "body_strength": "strong/moderate/weak with percentage",
-    "volume_trend": "increasing/decreasing/neutral"
-  }},
+  "recent_pattern": "description of last 2-3 candles",
+  "wick_rejection": "upper/lower/none with ratios",
+  "body_strength": "strong/moderate/weak with percentage",
+  "volume_trend": "increasing/decreasing/neutral",
   "order_blocks": ["detailed description with price levels"],
   "fvg_zones": ["detailed description with price levels"],
   "liquidity_sweeps": ["detailed description with price levels"],
@@ -376,7 +364,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
 }}
 """
 
-# ── AI Analysis Function (Groq Free API - Optimized) ──────────────────────────
+# ── AI Analysis Function (Groq Free API - Optimized & Robust) ─────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
@@ -410,11 +398,25 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
     if not content:
         raise ValueError("AI returned no content.")
     
+    # Robust JSON cleaning
     content = content.strip()
-    if content.startswith("```json"): content = content[7:]
-    if content.endswith("```"): content = content[:-3]
+    if content.startswith("```json"):
+        content = content[7:]
+    if content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+    content = content.strip()
     
-    return json.loads(content.strip())
+    # Fix common AI JSON mistakes (trailing commas before } or ])
+    content = re.sub(r',\s*([}\]])', r'\1', content)
+    
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        print(f"JSON Decode Error: {e}")
+        print(f"Raw AI Output:\n{content}")
+        raise ValueError(f"AI returned invalid JSON. Error: {e}. Check logs for raw output.")
 
 # ── Mathematical Validation Guardrail (UPGRADED: Checks R:R Accuracy) ─────────
 def validate_signal_math(analysis):
@@ -429,7 +431,6 @@ def validate_signal_math(analysis):
     if not entry or not sl or not tp1:
         return False, "Missing entry, SL, or TP values."
     
-    # 1. Directional Math Validation
     if signal == "BUY":
         if tp1 <= entry:
             return False, f"Invalid Math: For BUY, TP1 ({tp1}) MUST be > Entry ({entry})."
@@ -450,12 +451,11 @@ def validate_signal_math(analysis):
     if risk == 0:
         return False, "Invalid Math: Risk (Entry to SL distance) cannot be zero."
         
-    # 2. R:R Validation (Allow small floating point tolerance)
     actual_rr = reward / risk
-    if abs(actual_rr - ai_rr) > 0.5: # If AI claims 3.0 but math shows 1.2, reject
+    if abs(actual_rr - ai_rr) > 0.5:
         return False, f"Invalid Math: AI claimed R:R of {ai_rr}, but actual math based on Entry/SL/TP is {actual_rr:.2f}."
         
-    if actual_rr < 2.0: # Enforce minimum 1:2 R:R for HIGH confidence
+    if actual_rr < 2.0:
         return False, f"Invalid Math: Actual R:R is {actual_rr:.2f}, which is below the minimum 1:2.0 requirement for HIGH confidence."
             
     return True, "Valid"
@@ -622,7 +622,6 @@ st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
 check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
 
-# NEW: Sensitivity Slider
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Signal Sensitivity")
 sensitivity = st.sidebar.select_slider(
@@ -692,7 +691,6 @@ with tab1:
         st.markdown("<div style='background-color: #dc3545; color: white; padding: 10px; border-radius: 5px; text-align: center;'><h3>⚪ SYSTEM INACTIVE - Click START to begin</h3></div>", unsafe_allow_html=True)
     
     def process_symbol_result(result, symbol, is_auto=False):
-        # 1. Handle Rate Limits Gracefully with Early Exit
         if result and isinstance(result, dict) and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
             st.session_state.rate_limit_hit = True
             msg = f"⏳ **{symbol}**: Groq free tier daily token limit reached. Pausing all analysis until limit resets."
@@ -700,17 +698,14 @@ with tab1:
             add_notification('warning', msg)
             return
 
-        # 2. Handle other errors
         if result is None or (isinstance(result, dict) and 'error' in result):
             error_msg = "Data fetch failed or no data available." if result is None else result.get('error', 'Unknown error')
             st.error(f"❌ Error analyzing {symbol}: {error_msg}")
             return
 
-        # 3. Process valid results
         min_score = sensitivity
         if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= min_score:
             
-            # 4. PYTHON-SIDE MATHEMATICAL VALIDATION (The Ultimate Guardrail)
             is_valid_math, math_reason = validate_signal_math(result)
             if not is_valid_math:
                 msg = f"⚪ **{symbol}**: Signal Rejected due to Invalid Math. AI Reason: {math_reason}"
@@ -790,7 +785,6 @@ with tab1:
         st.session_state.last_analysis_time = datetime.now()
         st.rerun()
     
-    # Auto-run logic
     if st.session_state.bot_running:
         if st.session_state.next_check_time and datetime.now() >= st.session_state.next_check_time:
             st.info("🔄 Running scheduled analysis...")
@@ -831,7 +825,6 @@ with tab2:
                 st.write(f"**Timeframes:** {', '.join(signal.get('timeframes_aligned', []))}")
                 st.write(f"**Reasoning:** {signal.get('reasoning')}")
                 
-                # Add MT5 execution button if enabled
                 if MT5_ENABLED:
                     if st.button(f"⚡ Execute {MT5_NUM_TRADES} trade(s) on MT5", key=f"exec_{i}", use_container_width=True):
                         exec_result = execute_mt5_trade(
@@ -850,9 +843,11 @@ with tab2:
                             st.error(f"❌ Execution failed: {exec_result.get('error', 'Unknown error')}")
                             add_notification('warning', f"❌ **{signal['symbol']}**: Execution failed - {exec_result.get('error', 'Unknown error')}")
                 
-                if 'intra_candle_analysis' in signal:
-                    st.write("**Intra-Candle Analysis:**")
-                    st.json(signal['intra_candle_analysis'])
+                st.write("**Intra-Candle Analysis:**")
+                st.write(f"- **Pattern:** {signal.get('recent_pattern', 'N/A')}")
+                st.write(f"- **Wick Rejection:** {signal.get('wick_rejection', 'N/A')}")
+                st.write(f"- **Body Strength:** {signal.get('body_strength', 'N/A')}")
+                st.write(f"- **Volume Trend:** {signal.get('volume_trend', 'N/A')}")
                 
                 st.markdown("---")
 
