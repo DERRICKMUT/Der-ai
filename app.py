@@ -106,7 +106,7 @@ def add_notification(note_type: str, message: str):
     if len(st.session_state.app_notifications) > 100:
         st.session_state.app_notifications = st.session_state.app_notifications[-100:]
 
-# ─ Telegram Functions ────────────────────────────────────────────────────────
+# ── Telegram Functions ────────────────────────────────────────────────────────
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     try:
@@ -117,7 +117,7 @@ def send_telegram_message(message):
         print(f"Telegram error: {e}")
         return False
 
-# ── News API Integration ─────────────────────────────────────────────────────
+# ── News API Integration ──────────────────────────────────────────────────────
 def get_high_impact_news():
     try:
         res = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", params={"apifooter": "false"}, timeout=10)
@@ -251,7 +251,7 @@ MANDATORY ANALYSIS REQUIREMENTS:
 3. **MANIPULATION & TRAPS**: Identify "Springs" (false breakdowns) or "Upthrusts" (false breakouts). If price briefly breaks a key level but closes back inside with high volume, bias is the OPPOSITE of the breakout.
 4. **DIRECTION ONLY (NO MATH)**: DO NOT calculate Entry, SL, TP, or pick swing levels. AI models make arithmetic and geometry errors. 
    - Just tell us if the setup is a BUY or SELL based on the confluence.
-   - Python will automatically look at the Current Price, find the nearest Swing High/Low, and calculate mathematically perfect Entry, SL, and TP with a strict 1:2.5 R:R cap.
+   - Python will automatically look at the Current Price, find the nearest Swing High/Low, and calculate mathematically perfect Entry, SL, and TP with strict, asset-specific risk caps.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
@@ -294,7 +294,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, retry_count: int = 0) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
-        api_key = st.sidebar.text_input(" Groq API Key (gsk_...)", type="password")
+        api_key = st.sidebar.text_input("🔑 Groq API Key (gsk_...)", type="password")
     
     if not api_key or not api_key.startswith("gsk_"):
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "Missing or invalid Groq API Key."}
@@ -364,9 +364,9 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
-# ── PYTHON GEOMETRY ENFORCER (FIXED FOR REASONABLE TP/SL) ────────────────────
-def enforce_structural_math(analysis, swings, current_price):
-    """Calculates mathematically perfect Entry, SL, and TP with a strict 1:2.5 R:R cap."""
+# ── PYTHON GEOMETRY ENFORCER (ASSET-SPECIFIC REALISTIC CAPS) ─────────────────
+def enforce_structural_math(analysis, swings, current_price, symbol):
+    """Calculates mathematically perfect Entry, SL, and TP with strict, asset-specific caps."""
     signal = analysis.get('signal')
     if signal not in ['BUY', 'SELL']:
         return analysis
@@ -374,8 +374,14 @@ def enforce_structural_math(analysis, swings, current_price):
     swing_highs = sorted([h for h in swings.get('recent_swing_highs', []) if h > 0], reverse=True)
     swing_lows = sorted([l for l in swings.get('recent_swing_lows', []) if l > 0])
 
-    # Cap SL distance to 1.5% of current price to prevent insane setups
-    max_sl_distance = current_price * 0.015 
+    # ASSET-SPECIFIC MAX SL DISTANCE (Prevents insane Gold/Oil setups)
+    if symbol == 'XAUUSD':
+        max_sl_distance = 15.0  # Max 15.0 points (150 pips) for Gold
+    elif symbol == 'USOIL':
+        max_sl_distance = 2.0   # Max 2.0 points for Crude Oil
+    else:
+        max_sl_distance = current_price * 0.01  # Fallback 1% for others
+
     target_rr = 2.5 # Strict 1:2.5 Risk:Reward
 
     if signal == 'SELL':
@@ -383,8 +389,8 @@ def enforce_structural_math(analysis, swings, current_price):
         structural_sl = valid_sl_levels[0] if valid_sl_levels else current_price + max_sl_distance
         
         sl_distance = min(structural_sl - current_price, max_sl_distance)
-        analysis['stop_loss'] = round(current_price + sl_distance, 5)
-        analysis['entry'] = round(current_price, 5)
+        analysis['stop_loss'] = round(current_price + sl_distance, 2)
+        analysis['entry'] = round(current_price, 2)
         
         tp_distance = sl_distance * target_rr
         target_tp = current_price - tp_distance
@@ -392,18 +398,19 @@ def enforce_structural_math(analysis, swings, current_price):
         valid_tp_levels = [l for l in swing_lows if l < current_price]
         nearest_swing_low = valid_tp_levels[0] if valid_tp_levels else None
         
+        # If target TP overshoots the structural low, pull it back to sit just above it
         if nearest_swing_low and target_tp < nearest_swing_low:
-            analysis['take_profit'] = [round(nearest_swing_low + (current_price * 0.001), 5)]
+            analysis['take_profit'] = [round(nearest_swing_low + 0.5, 2)]
         else:
-            analysis['take_profit'] = [round(target_tp, 5)]
+            analysis['take_profit'] = [round(target_tp, 2)]
 
     elif signal == 'BUY':
         valid_sl_levels = [l for l in swing_lows if l < current_price]
         structural_sl = valid_sl_levels[0] if valid_sl_levels else current_price - max_sl_distance
         
         sl_distance = min(current_price - structural_sl, max_sl_distance)
-        analysis['stop_loss'] = round(current_price - sl_distance, 5)
-        analysis['entry'] = round(current_price, 5)
+        analysis['stop_loss'] = round(current_price - sl_distance, 2)
+        analysis['entry'] = round(current_price, 2)
         
         tp_distance = sl_distance * target_rr
         target_tp = current_price + tp_distance
@@ -411,10 +418,11 @@ def enforce_structural_math(analysis, swings, current_price):
         valid_tp_levels = [h for h in swing_highs if h > current_price]
         nearest_swing_high = valid_tp_levels[0] if valid_tp_levels else None
         
+        # If target TP overshoots the structural high, pull it back to sit just below it
         if nearest_swing_high and target_tp > nearest_swing_high:
-            analysis['take_profit'] = [round(nearest_swing_high - (current_price * 0.001), 5)]
+            analysis['take_profit'] = [round(nearest_swing_high - 0.5, 2)]
         else:
-            analysis['take_profit'] = [round(target_tp, 5)]
+            analysis['take_profit'] = [round(target_tp, 2)]
 
     risk = abs(analysis['entry'] - analysis['stop_loss'])
     reward = abs(analysis['entry'] - analysis['take_profit'][0])
@@ -532,7 +540,8 @@ def analyze_symbol_premium(symbol):
         
         analysis = call_gpt("You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork.", user_content, max_tokens=2000)
         
-        analysis = enforce_structural_math(analysis, swings, current_price)
+        # PYTHON GEOMETRY ENFORCEMENT: Python finds the correct structural levels with asset-specific caps
+        analysis = enforce_structural_math(analysis, swings, current_price, symbol)
         
         analysis['symbol'] = symbol
         analysis['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -583,7 +592,7 @@ with col2:
         add_notification('warning', "⏸️ Bot stopped by user.")
         st.rerun()
 with col3:
-    if st.button("️ CLEAR", use_container_width=True):
+    if st.button("🗑️ CLEAR", use_container_width=True):
         st.session_state.active_signals = {}
         st.session_state.signal_history = []
         st.session_state.app_notifications = []
@@ -610,7 +619,7 @@ st.sidebar.subheader("📊 Session Stats")
 st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([" Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
 
 with tab1:
     st.header("🔴 Live Multi-Timeframe Analysis")
@@ -699,7 +708,7 @@ with tab1:
                 if not is_auto: st.markdown("---")
         else:
             ai_reason = result.get('rejection_reason', 'Insufficient confluence factors met or contradictory wick/volume logic.')
-            msg = f" **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
+            msg = f"⚪ **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
             if not is_auto: st.info(msg)
             add_notification('warning', msg)
 
@@ -742,7 +751,7 @@ with tab1:
             st.rerun()
 
 with tab2:
-    st.header(" Premium Signal History")
+    st.header("📜 Premium Signal History")
     if len(st.session_state.signal_history) == 0:
         st.info("📭 No high-quality signals generated yet.")
     else:
@@ -798,12 +807,12 @@ with tab4:
 
 with tab5:
     st.header("⚙️ System Settings")
-    st.subheader(" Telegram Setup")
+    st.subheader("📱 Telegram Setup")
     st.markdown("1. Create a bot via @BotFather on Telegram\n2. Get your bot token\n3. Get your chat ID (use @userinfobot)\n4. Add to Streamlit Secrets: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`")
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- **Python Geometry Enforcement:** AI decides BUY/SELL; Python automatically finds the nearest structural Swing High/Low, caps SL distance to 1.5%, and calculates a strict 1:2.5 R:R Take Profit.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- **Asset-Specific Risk Caps:** Gold SL capped at 15 points (150 pips), Oil at 2 points. Python enforces strict 1:2.5 R:R.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
