@@ -106,7 +106,7 @@ def add_notification(note_type: str, message: str):
     if len(st.session_state.app_notifications) > 100:
         st.session_state.app_notifications = st.session_state.app_notifications[-100:]
 
-# ── Telegram Functions ────────────────────────────────────────────────────────
+# ─ Telegram Functions ────────────────────────────────────────────────────────
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     try:
@@ -117,7 +117,7 @@ def send_telegram_message(message):
         print(f"Telegram error: {e}")
         return False
 
-# ── News API Integration ──────────────────────────────────────────────────────
+# ── News API Integration ─────────────────────────────────────────────────────
 def get_high_impact_news():
     try:
         res = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", params={"apifooter": "false"}, timeout=10)
@@ -127,7 +127,7 @@ def get_high_impact_news():
     except Exception:
         return []
 
-# ─ Multi-Timeframe Data Fetching ─────────────────────────────────────────────
+# ── Multi-Timeframe Data Fetching ─────────────────────────────────────────────
 def fetch_mtf_data(symbol):
     ticker = YFINANCE_MAP.get(symbol, symbol)
     data = {}
@@ -143,7 +143,7 @@ def fetch_mtf_data(symbol):
         print(f"Data fetch error for {symbol}: {e}")
         return None
 
-# ── Advanced Intra-Candle Analysis ───────────────────────────────────────────
+# ── Advanced Intra-Candle Analysis ────────────────────────────────────────────
 def analyze_candle_structure(df):
     if len(df) < 3: return []
     analysis = []
@@ -171,7 +171,7 @@ def analyze_candle_structure(df):
         analysis.append({'time': df.index[i], 'candle_type': candle_type, 'pattern': pattern, 'body_ratio': body_ratio, 'upper_wick_ratio': upper_wick_ratio, 'lower_wick_ratio': lower_wick_ratio, 'price': candle['Close'], 'volume': candle['Volume']})
     return analysis[-5:]
 
-# ── Advanced SMC Detection ───────────────────────────────────────────────────
+# ── Advanced SMC Detection ────────────────────────────────────────────────────
 def detect_bos_choch(df):
     if len(df) < 10: return None, None
     highs = df['High'].rolling(window=5).max()
@@ -231,7 +231,7 @@ def detect_liquidity_sweeps(df):
             sweeps.append({'type': 'BEARISH_SWEEP', 'price': candle['High'], 'strength': 'STRONG' if (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt (PYTHON GEOMETRY ENFORCEMENT) ─────────────────
+# ── Premium AI Analysis Prompt ───────────────────────────────────────────────
 PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis to detect EARLY EXPANSION and EARLY REVERSAL setups. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
@@ -251,7 +251,7 @@ MANDATORY ANALYSIS REQUIREMENTS:
 3. **MANIPULATION & TRAPS**: Identify "Springs" (false breakdowns) or "Upthrusts" (false breakouts). If price briefly breaks a key level but closes back inside with high volume, bias is the OPPOSITE of the breakout.
 4. **DIRECTION ONLY (NO MATH)**: DO NOT calculate Entry, SL, TP, or pick swing levels. AI models make arithmetic and geometry errors. 
    - Just tell us if the setup is a BUY or SELL based on the confluence.
-   - Python will automatically look at the Current Price, find the nearest Swing High/Low, and calculate mathematically perfect Entry, SL, and TP.
+   - Python will automatically look at the Current Price, find the nearest Swing High/Low, and calculate mathematically perfect Entry, SL, and TP with a strict 1:2.5 R:R cap.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
@@ -364,46 +364,58 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
-# ── PYTHON GEOMETRY ENFORCER (100% MATH ACCURACY) ────────────────────────────
+# ── PYTHON GEOMETRY ENFORCER (FIXED FOR REASONABLE TP/SL) ────────────────────
 def enforce_structural_math(analysis, swings, current_price):
-    """Takes the AI's BUY/SELL decision and Python automatically finds the correct structural levels."""
+    """Calculates mathematically perfect Entry, SL, and TP with a strict 1:2.5 R:R cap."""
     signal = analysis.get('signal')
     if signal not in ['BUY', 'SELL']:
         return analysis
 
-    # Sort swings to easily find nearest levels
     swing_highs = sorted([h for h in swings.get('recent_swing_highs', []) if h > 0], reverse=True)
     swing_lows = sorted([l for l in swings.get('recent_swing_lows', []) if l > 0])
 
-    buffer = current_price * 0.001 # 0.1% structural buffer
+    # Cap SL distance to 1.5% of current price to prevent insane setups
+    max_sl_distance = current_price * 0.015 
+    target_rr = 2.5 # Strict 1:2.5 Risk:Reward
 
     if signal == 'SELL':
-        # SL MUST be ABOVE current price. Find nearest swing high above price.
         valid_sl_levels = [h for h in swing_highs if h > current_price]
-        sl_level = valid_sl_levels[0] if valid_sl_levels else current_price + (current_price * 0.01)
-
-        # TP MUST be BELOW current price. Find nearest swing low below price.
-        valid_tp_levels = [l for l in swing_lows if l < current_price]
-        tp_level = valid_tp_levels[0] if valid_tp_levels else current_price - (current_price * 0.02)
-
-        analysis['stop_loss'] = round(sl_level + buffer, 5)
-        analysis['take_profit'] = [round(tp_level, 5)]
+        structural_sl = valid_sl_levels[0] if valid_sl_levels else current_price + max_sl_distance
+        
+        sl_distance = min(structural_sl - current_price, max_sl_distance)
+        analysis['stop_loss'] = round(current_price + sl_distance, 5)
         analysis['entry'] = round(current_price, 5)
+        
+        tp_distance = sl_distance * target_rr
+        target_tp = current_price - tp_distance
+        
+        valid_tp_levels = [l for l in swing_lows if l < current_price]
+        nearest_swing_low = valid_tp_levels[0] if valid_tp_levels else None
+        
+        if nearest_swing_low and target_tp < nearest_swing_low:
+            analysis['take_profit'] = [round(nearest_swing_low + (current_price * 0.001), 5)]
+        else:
+            analysis['take_profit'] = [round(target_tp, 5)]
 
     elif signal == 'BUY':
-        # SL MUST be BELOW current price. Find nearest swing low below price.
         valid_sl_levels = [l for l in swing_lows if l < current_price]
-        sl_level = valid_sl_levels[0] if valid_sl_levels else current_price - (current_price * 0.01)
-
-        # TP MUST be ABOVE current price. Find nearest swing high above price.
-        valid_tp_levels = [h for h in swing_highs if h > current_price]
-        tp_level = valid_tp_levels[0] if valid_tp_levels else current_price + (current_price * 0.02)
-
-        analysis['stop_loss'] = round(sl_level - buffer, 5)
-        analysis['take_profit'] = [round(tp_level, 5)]
+        structural_sl = valid_sl_levels[0] if valid_sl_levels else current_price - max_sl_distance
+        
+        sl_distance = min(current_price - structural_sl, max_sl_distance)
+        analysis['stop_loss'] = round(current_price - sl_distance, 5)
         analysis['entry'] = round(current_price, 5)
+        
+        tp_distance = sl_distance * target_rr
+        target_tp = current_price + tp_distance
+        
+        valid_tp_levels = [h for h in swing_highs if h > current_price]
+        nearest_swing_high = valid_tp_levels[0] if valid_tp_levels else None
+        
+        if nearest_swing_high and target_tp > nearest_swing_high:
+            analysis['take_profit'] = [round(nearest_swing_high - (current_price * 0.001), 5)]
+        else:
+            analysis['take_profit'] = [round(target_tp, 5)]
 
-    # Calculate R:R
     risk = abs(analysis['entry'] - analysis['stop_loss'])
     reward = abs(analysis['entry'] - analysis['take_profit'][0])
     analysis['rr_ratio'] = round(reward / risk, 2) if risk > 0 else 0
@@ -417,7 +429,6 @@ def validate_signal_math(analysis):
     sl = analysis.get('stop_loss', 0)
     tp_list = analysis.get('take_profit', [])
     tp1 = tp_list[0] if len(tp_list) > 0 else 0
-    ai_rr = analysis.get('rr_ratio', 0)
     
     if not entry or not sl or not tp1:
         return False, "Missing entry, SL, or TP values."
@@ -425,21 +436,11 @@ def validate_signal_math(analysis):
     if signal == "BUY":
         if tp1 <= entry: return False, f"Invalid Math: For BUY, TP1 ({tp1}) MUST be > Entry ({entry})."
         if sl >= entry: return False, f"Invalid Math: For BUY, SL ({sl}) MUST be < Entry ({entry})."
-        risk, reward = abs(entry - sl), abs(tp1 - entry)
     elif signal == "SELL":
         if tp1 >= entry: return False, f"Invalid Math: For SELL, TP1 ({tp1}) MUST be < Entry ({entry})."
         if sl <= entry: return False, f"Invalid Math: For SELL, SL ({sl}) MUST be > Entry ({entry})."
-        risk, reward = abs(sl - entry), abs(entry - tp1)
     else:
         return False, "Invalid signal direction."
-        
-    if risk == 0: return False, "Invalid Math: Risk cannot be zero."
-        
-    actual_rr = reward / risk
-    if abs(actual_rr - ai_rr) > 0.5:
-        return False, f"Invalid Math: AI claimed R:R of {ai_rr}, but actual is {actual_rr:.2f}."
-    if actual_rr < 2.0:
-        return False, f"Poor Risk:Reward Setup. Actual R:R is {actual_rr:.2f}, which is below the minimum 1:2.0 requirement for HIGH confidence."
             
     return True, "Valid"
 
@@ -531,7 +532,6 @@ def analyze_symbol_premium(symbol):
         
         analysis = call_gpt("You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork.", user_content, max_tokens=2000)
         
-        # PYTHON GEOMETRY ENFORCEMENT: Python finds the correct structural levels
         analysis = enforce_structural_math(analysis, swings, current_price)
         
         analysis['symbol'] = symbol
@@ -541,7 +541,7 @@ def analyze_symbol_premium(symbol):
     except Exception as e:
         return {"error": str(e)}
 
-# ── Signal Formatter for Telegram ───────────────────────────────────────────
+# ── Signal Formatter for Telegram ────────────────────────────────────────────
 def format_signal_for_telegram(analysis):
     if 'error' in analysis: return f"❌ Error: {analysis['error']}"
     emoji = "🟢" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
@@ -553,7 +553,7 @@ def format_signal_for_telegram(analysis):
 🎯 <b>TP1:</b> {analysis.get('take_profit', ['N/A'])[0] if analysis.get('take_profit') else 'N/A'} | 🎯 <b>TP2:</b> {analysis.get('take_profit', ['N/A', 'N/A'])[1] if len(analysis.get('take_profit', [])) > 1 else 'N/A'}
 🔍 <b>CONFLUENCE:</b> {', '.join(analysis.get('timeframes_aligned', []))} | OBs: {len(analysis.get('order_blocks', []))} | FVGs: {len(analysis.get('fvg_zones', []))} | Sweeps: {len(analysis.get('liquidity_sweeps', []))}
 🧠 <b>ANALYSIS:</b> {analysis.get('reasoning', 'N/A')}
-{f" <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
+{f"📰 <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
 <i>Der-AI Professional Trading System</i>
     """.strip()
 
@@ -561,7 +561,7 @@ def format_signal_for_telegram(analysis):
 st.title("🎯 Der-AI | Professional Multi-Timeframe Trading System")
 st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Alerts | MT5 Execution**")
 
-st.sidebar.header("️ System Configuration")
+st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
 check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
 
@@ -583,7 +583,7 @@ with col2:
         add_notification('warning', "⏸️ Bot stopped by user.")
         st.rerun()
 with col3:
-    if st.button("🗑️ CLEAR", use_container_width=True):
+    if st.button("️ CLEAR", use_container_width=True):
         st.session_state.active_signals = {}
         st.session_state.signal_history = []
         st.session_state.app_notifications = []
@@ -603,17 +603,17 @@ if st.session_state.bot_running:
         else:
             st.sidebar.info("⏱️ Checking now...")
 else:
-    st.sidebar.warning("️ **BOT STOPPED**")
+    st.sidebar.warning("⏸️ **BOT STOPPED**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 Session Stats")
 st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", " Signal History", "🔔 Notifications", " News Calendar", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([" Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
 
 with tab1:
-    st.header(" Live Multi-Timeframe Analysis")
+    st.header("🔴 Live Multi-Timeframe Analysis")
     
     if st.session_state.bot_running:
         if st.session_state.next_check_time:
@@ -671,11 +671,11 @@ with tab1:
             
             if is_repeat:
                 last_time = st.session_state.active_signals[symbol]['timestamp'].strftime('%H:%M')
-                msg = f"️ **{symbol}**: Setup already active since {last_time}. Waiting for execution or structural invalidation. (15-min cooldown)"
+                msg = f"⏸️ **{symbol}**: Setup already active since {last_time}. Waiting for execution or structural invalidation. (15-min cooldown)"
                 if not is_auto: st.info(msg)
                 add_notification('info', msg)
             else:
-                sig_color = "" if result.get('signal') == "BUY" else "🔴"
+                sig_color = "🟢" if result.get('signal') == "BUY" else "🔴"
                 if not is_auto: st.markdown(f"### {sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')}")
                 else: st.success(f"{sig_color} **NEW SIGNAL:** {result['symbol']} - {result.get('signal')} | Score: {result.get('confluence_score')}/100")
                 
@@ -699,7 +699,7 @@ with tab1:
                 if not is_auto: st.markdown("---")
         else:
             ai_reason = result.get('rejection_reason', 'Insufficient confluence factors met or contradictory wick/volume logic.')
-            msg = f"⚪ **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
+            msg = f" **{symbol}**: Signal Rejected. Score: {result.get('confluence_score', 0)}/100, Confidence: {result.get('confidence', 'N/A')}. AI Reason: {ai_reason}"
             if not is_auto: st.info(msg)
             add_notification('warning', msg)
 
@@ -742,7 +742,7 @@ with tab1:
             st.rerun()
 
 with tab2:
-    st.header("📜 Premium Signal History")
+    st.header(" Premium Signal History")
     if len(st.session_state.signal_history) == 0:
         st.info("📭 No high-quality signals generated yet.")
     else:
@@ -798,12 +798,12 @@ with tab4:
 
 with tab5:
     st.header("⚙️ System Settings")
-    st.subheader("📱 Telegram Setup")
+    st.subheader(" Telegram Setup")
     st.markdown("1. Create a bot via @BotFather on Telegram\n2. Get your bot token\n3. Get your chat ID (use @userinfobot)\n4. Add to Streamlit Secrets: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`")
-    st.subheader("️ MT5 Auto-Execution")
+    st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Python Geometry Enforcement:** AI decides BUY/SELL; Python automatically finds the nearest structural Swing High/Low to calculate mathematically perfect Entry, SL, and TP.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- **Python Geometry Enforcement:** AI decides BUY/SELL; Python automatically finds the nearest structural Swing High/Low, caps SL distance to 1.5%, and calculates a strict 1:2.5 R:R Take Profit.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
