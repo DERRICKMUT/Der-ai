@@ -15,7 +15,7 @@ except ImportError:
 # ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Der-AI | Professional Trading System",
-    page_icon="",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -50,7 +50,7 @@ MT5_SERVER_DEFAULT = st.secrets.get("MT5_SERVER", query_params.get("mt5_server",
 MT5_LOT_SIZE_DEFAULT = float(st.secrets.get("MT5_LOT_SIZE", query_params.get("mt5_lot_size", "0.01")))
 MT5_NUM_TRADES_DEFAULT = int(st.secrets.get("MT5_NUM_TRADES", query_params.get("mt5_num_trades", "1")))
 
-# ─ API Keys & Config ─────────────────────────────────────────────────────────
+# ── API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
@@ -63,7 +63,7 @@ if 'mt5_num_trades' not in st.session_state: st.session_state.mt5_num_trades = M
 MT5_ENABLED = st.sidebar.checkbox("Enable MT5 Auto-Execution", value=False)
 
 if MT5_ENABLED:
-    st.sidebar.subheader("⚙️ MT5 Configuration")
+    st.sidebar.subheader("️ MT5 Configuration")
     
     mt5_account_input = st.sidebar.text_input("MT5 Account Number", value=st.session_state.mt5_account, key="mt5_account_input")
     if mt5_account_input != st.session_state.mt5_account:
@@ -88,7 +88,7 @@ if MT5_ENABLED:
         st.session_state.mt5_num_trades = mt5_num_input
         st.query_params["mt5_num_trades"] = str(mt5_num_input)
     
-    if st.sidebar.button(" Save Credentials to Secrets"):
+    if st.sidebar.button("💾 Save Credentials to Secrets"):
         st.sidebar.info("Go to Streamlit Dashboard → App → Settings → Secrets and add: MT5_ACCOUNT, MT5_SERVER, MT5_LOT_SIZE, MT5_NUM_TRADES. (Never store passwords in Secrets).")
 
 MT5_ACCOUNT = st.session_state.mt5_account
@@ -127,7 +127,7 @@ def get_high_impact_news():
     except Exception:
         return []
 
-# ─ Multi-Timeframe Data Fetching ─────────────────────────────────────────────
+# ── Multi-Timeframe Data Fetching ─────────────────────────────────────────────
 def fetch_mtf_data(symbol):
     ticker = YFINANCE_MAP.get(symbol, symbol)
     data = {}
@@ -143,7 +143,7 @@ def fetch_mtf_data(symbol):
         print(f"Data fetch error for {symbol}: {e}")
         return None
 
-# ── Advanced Intra-Candle Analysis ────────────────────────────────────────────
+# ── Advanced Intra-Candle Analysis ───────────────────────────────────────────
 def analyze_candle_structure(df):
     if len(df) < 3: return []
     analysis = []
@@ -231,7 +231,7 @@ def detect_liquidity_sweeps(df):
             sweeps.append({'type': 'BEARISH_SWEEP', 'price': candle['High'], 'strength': 'STRONG' if (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt ────────────────────────────────────────────────
+# ── Premium AI Analysis Prompt (PYTHON MATH ENFORCEMENT) ──────────────────────
 PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis to detect EARLY EXPANSION and EARLY REVERSAL setups. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
@@ -249,10 +249,10 @@ MANDATORY ANALYSIS REQUIREMENTS:
 1. **EARLY REVERSAL DETECTION**: Look for HTF liquidity sweeps into a key HTF Order Block/FVG, confirmed by immediate M15/M10 Change of Character (CHoCH) and strong rejection wicks (wick ratio > 60%).
 2. **EARLY EXPANSION DETECTION**: Look for ATR compression (coiling) followed by a sudden, strong directional candle. VALIDATION: The expansion candle MUST have INCREASING volume. Strong body + decreasing volume = TRAP/EXHAUSTION (REJECT SIGNAL).
 3. **MANIPULATION & TRAPS**: Identify "Springs" (false breakdowns) or "Upthrusts" (false breakouts). If price briefly breaks a key level but closes back inside with high volume, bias is the OPPOSITE of the breakout.
-4. **PERFECT ZONE & PRECISE MATH**: Use the EXACT 'Swing Highs' and 'Swing Lows' provided. 
-   - For BUY: Entry = Current Price or limit at Bullish OB top. SL = Recent Swing Low - buffer. TP1 = Next Recent Swing High. TP2 = HTF Swing High or min 1:2.5 R:R.
-   - For SELL: Entry = Current Price or limit at Bearish OB bottom. SL = Recent Swing High + buffer. TP1 = Next Recent Swing Low. TP2 = HTF Swing Low or min 1:2.5 R:R.
-   - MATHEMATICAL RULE: BUY requires TP > Entry > SL. SELL requires TP < Entry < SL.
+4. **STRUCTURAL ZONES ONLY (NO MATH)**: DO NOT calculate final Entry, SL, or TP. AI models make arithmetic errors. Instead, identify the EXACT price levels from the data for your structural zones.
+   - For a SELL: Identify the `sl_swing_high` (the Swing High above price to place SL) and `tp_swing_low` (the Swing Low below price to place TP).
+   - For a BUY: Identify the `sl_swing_low` (the Swing Low below price to place SL) and `tp_swing_high` (the Swing High above price to place TP).
+   - Python will automatically calculate the mathematically perfect Entry, SL, and TP based on these levels.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
@@ -266,10 +266,10 @@ YOUR TASK:
 ═══════════════════════════════════════════════════════════════════════════════
 1. Analyze intra-candle data FIRST. Reject immediately if volume divergence or contradictory wicks are present.
 2. Determine H4/H1 macro bias. Look for early reversal or expansion triggers on M15/M10.
-3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity.
+3. Identify the exact structural swing levels for SL and TP.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
-OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax with no trailing commas and no unescaped quotes:
+OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax:
 {{
   "bias": "BULLISH|BEARISH|RANGING",
   "signal": "BUY|SELL|WAIT",
@@ -285,10 +285,9 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
   "liquidity_sweeps": ["detailed description with price levels"],
   "bos_choch": ["detailed description with price levels"],
   "entry_type": "MARKET|BUY_LIMIT|SELL_LIMIT|BUY_STOP|SELL_STOP",
-  "entry": 0.00,
-  "stop_loss": 0.00,
-  "take_profit": [0.00, 0.00],
-  "rr_ratio": 0.00,
+  "sl_swing_level": 0.00,
+  "tp_swing_level": 0.00,
+  "rr_ratio": 2.5,
   "reasoning": "Detailed explanation citing SPECIFIC early expansion/reversal triggers, manipulation traps avoided, multi-TF confluence, and structural levels",
   "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors, contradictory wick/volume logic, or invalid math",
   "news_impact": "Analysis if news approaching"
@@ -371,6 +370,47 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
+# ── PYTHON MATH ENFORCER (ELIMINATES AI HALLUCINATIONS) ───────────────────────
+def enforce_structural_math(analysis, swings, current_price):
+    """Takes the AI's structural levels and calculates mathematically perfect Entry, SL, and TP."""
+    signal = analysis.get('signal')
+    if signal not in ['BUY', 'SELL']:
+        return analysis
+
+    swing_highs = swings.get('recent_swing_highs', [])
+    swing_lows = swings.get('recent_swing_lows', [])
+    sl_level = analysis.get('sl_swing_level', 0)
+    tp_level = analysis.get('tp_swing_level', 0)
+
+    # Fallback if AI didn't provide levels
+    if not sl_level and swing_highs: sl_level = max(swing_highs)
+    if not tp_level and swing_lows: tp_level = min(swing_lows)
+
+    buffer = current_price * 0.001 # 0.1% structural buffer
+
+    if signal == 'SELL':
+        # SL MUST be above the Swing High. TP MUST be below Entry.
+        analysis['stop_loss'] = round(sl_level + buffer, 5)
+        analysis['take_profit'] = [round(tp_level, 5)]
+        # Entry is current price, or limit at OB. We use current price for market execution safety.
+        analysis['entry'] = round(current_price, 5)
+        
+        risk = abs(analysis['entry'] - analysis['stop_loss'])
+        reward = abs(analysis['entry'] - analysis['take_profit'][0])
+        analysis['rr_ratio'] = round(reward / risk, 2) if risk > 0 else 0
+
+    elif signal == 'BUY':
+        # SL MUST be below the Swing Low. TP MUST be above Entry.
+        analysis['stop_loss'] = round(sl_level - buffer, 5)
+        analysis['take_profit'] = [round(tp_level, 5)]
+        analysis['entry'] = round(current_price, 5)
+        
+        risk = abs(analysis['entry'] - analysis['stop_loss'])
+        reward = abs(analysis['entry'] - analysis['take_profit'][0])
+        analysis['rr_ratio'] = round(reward / risk, 2) if risk > 0 else 0
+
+    return analysis
+
 # ── Mathematical Validation Guardrail ────────────────────────────────────────
 def validate_signal_math(analysis):
     signal = analysis.get('signal')
@@ -437,7 +477,7 @@ def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size, num_trades=1):
     except Exception as e:
         return {"error": str(e)}
 
-# ── Premium Signal Generation Engine ──────────────────────────────────────────
+# ─ Premium Signal Generation Engine ──────────────────────────────────────────
 def analyze_symbol_premium(symbol):
     try:
         mtf_data = fetch_mtf_data(symbol)
@@ -445,6 +485,8 @@ def analyze_symbol_premium(symbol):
         
         news = get_high_impact_news()
         analysis_summary, intra_candle_data = [], []
+        current_price = 0
+        swings = {"recent_swing_highs": [], "recent_swing_lows": []}
         
         for tf, df in mtf_data.items():
             if df.empty: continue
@@ -454,7 +496,7 @@ def analyze_symbol_premium(symbol):
             obs = detect_order_blocks(df) if is_key_tf else []
             fvgs = detect_fvg(df) if is_key_tf else []
             sweeps = detect_liquidity_sweeps(df) if is_key_tf else []
-            swings = find_swings(df)
+            swings = find_swings(df) # Capture swings for Python math
             
             if len(df) > 50:
                 ema20 = df['Close'].ewm(span=20).mean().iloc[-1]
@@ -489,6 +531,10 @@ def analyze_symbol_premium(symbol):
         )}]
         
         analysis = call_gpt("You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork.", user_content, max_tokens=2000)
+        
+        # PYTHON MATH ENFORCEMENT: Calculate perfect levels based on AI's structural zones
+        analysis = enforce_structural_math(analysis, swings, current_price)
+        
         analysis['symbol'] = symbol
         analysis['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         analysis['analyzed_at'] = datetime.now()
@@ -496,29 +542,29 @@ def analyze_symbol_premium(symbol):
     except Exception as e:
         return {"error": str(e)}
 
-# ── Signal Formatter for Telegram ───────────────────────────────────────────
+# ─ Signal Formatter for Telegram ────────────────────────────────────────────
 def format_signal_for_telegram(analysis):
     if 'error' in analysis: return f"❌ Error: {analysis['error']}"
-    emoji = "" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
+    emoji = "🟢" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
     return f"""
 {emoji} <b>DER-AI PREMIUM SIGNAL</b> {emoji}
-📊 <b>{analysis['symbol']}</b> - {analysis.get('signal', 'WAIT')} | ⏰ {analysis.get('timestamp', 'N/A')}
+📊 <b>{analysis['symbol']}</b> - {analysis.get('signal', 'WAIT')} |  {analysis.get('timestamp', 'N/A')}
 🎯 <b>CONFIDENCE:</b> {analysis.get('confidence', 'N/A')} | 📈 <b>SCORE:</b> {analysis.get('confluence_score', 0)}/100 | ⚖️ <b>R:R:</b> 1:{analysis.get('rr_ratio', 0):.1f}
 💰 <b>ENTRY:</b> {analysis.get('entry', 'N/A')} | 🛑 <b>STOP LOSS:</b> {analysis.get('stop_loss', 'N/A')}
 🎯 <b>TP1:</b> {analysis.get('take_profit', ['N/A'])[0] if analysis.get('take_profit') else 'N/A'} | 🎯 <b>TP2:</b> {analysis.get('take_profit', ['N/A', 'N/A'])[1] if len(analysis.get('take_profit', [])) > 1 else 'N/A'}
 🔍 <b>CONFLUENCE:</b> {', '.join(analysis.get('timeframes_aligned', []))} | OBs: {len(analysis.get('order_blocks', []))} | FVGs: {len(analysis.get('fvg_zones', []))} | Sweeps: {len(analysis.get('liquidity_sweeps', []))}
 🧠 <b>ANALYSIS:</b> {analysis.get('reasoning', 'N/A')}
-{f" <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
+{f"📰 <b>NEWS:</b>\n{analysis.get('news_impact', 'N/A')}" if analysis.get('news_impact') else ""}
 <i>Der-AI Professional Trading System</i>
     """.strip()
 
-# ── Main App UI ───────────────────────────────────────────────────────────────
+# ─ Main App UI ───────────────────────────────────────────────────────────────
 st.title("🎯 Der-AI | Professional Multi-Timeframe Trading System")
 st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Alerts | MT5 Execution**")
 
 st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Signal Sensitivity")
@@ -538,7 +584,7 @@ with col2:
         add_notification('warning', "⏸️ Bot stopped by user.")
         st.rerun()
 with col3:
-    if st.button("🗑️ CLEAR", use_container_width=True):
+    if st.button("️ CLEAR", use_container_width=True):
         st.session_state.active_signals = {}
         st.session_state.signal_history = []
         st.session_state.app_notifications = []
@@ -558,17 +604,17 @@ if st.session_state.bot_running:
         else:
             st.sidebar.info("⏱️ Checking now...")
 else:
-    st.sidebar.warning("️ **BOT STOPPED**")
+    st.sidebar.warning("⏸️ **BOT STOPPED**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 Session Stats")
 st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔴 Live Monitoring", " Signal History", "🔔 Notifications", " News Calendar", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([" Live Monitoring", "📜 Signal History", "🔔 Notifications", "📰 News Calendar", "⚙️ Settings"])
 
 with tab1:
-    st.header(" Live Multi-Timeframe Analysis")
+    st.header("🔴 Live Multi-Timeframe Analysis")
     
     if st.session_state.bot_running:
         if st.session_state.next_check_time:
@@ -577,7 +623,7 @@ with tab1:
                 mins, secs = int(time_left // 60), int(time_left % 60)
                 st.markdown(f"""
                 <div style="background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px;">
-                    <h2 style="margin: 0; font-size: 1.2em; font-weight: normal;">⏱️ Next Live Analysis In</h2>
+                    <h2 style="margin: 0; font-size: 1.2em; font-weight: normal;">️ Next Live Analysis In</h2>
                     <h1 style="margin: 10px 0; font-size: 2.5em; font-weight: bold; color: #bfdbfe;">{mins}m {secs}s</h1>
                     <p style="margin: 0; font-size: 0.95em; opacity: 0.9;">✅ Continuously fetching real-time market data for maximum accuracy...</p>
                 </div>
@@ -758,7 +804,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 1-second pre-request cool-down to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Python Math Enforcement:** AI identifies structural zones; Python calculates mathematically perfect Entry, SL, and TP to eliminate AI arithmetic hallucinations.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
