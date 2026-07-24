@@ -231,7 +231,7 @@ def detect_liquidity_sweeps(df):
             sweeps.append({'type': 'BEARISH_SWEEP', 'price': candle['High'], 'strength': 'STRONG' if (candle['High'] - candle['Close']) > (candle['High'] - candle['Low']) * 0.8 else 'MODERATE'})
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt ───────────────────────────────────────────────
+# ── Premium AI Analysis Prompt (RUTHLESS CONTRADICTION RULES) ────────────────
 PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis to detect EARLY EXPANSION and EARLY REVERSAL setups. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
@@ -247,25 +247,27 @@ HIGH IMPACT NEWS (next 24h):
 MANDATORY ANALYSIS REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════════════════
 1. **EARLY REVERSAL DETECTION**: Look for HTF liquidity sweeps into a key HTF Order Block/FVG, confirmed by immediate M15/M10 Change of Character (CHoCH) and strong rejection wicks (wick ratio > 60%).
-2. **EARLY EXPANSION DETECTION**: Look for ATR compression (coiling) followed by a sudden, strong directional candle. VALIDATION: The expansion candle MUST have INCREASING volume. Strong body + decreasing volume = TRAP/EXHAUSTION (REJECT SIGNAL).
+2. **EARLY EXPANSION DETECTION**: Look for ATR compression (coiling) followed by a sudden, strong directional candle. VALIDATION: The expansion candle MUST have INCREASING volume AND >70% body strength. Increasing volume on a weak body (<50%) with an upper wick is DISTRIBUTION/ABSORPTION (Bearish), NOT bullish.
 3. **MANIPULATION & TRAPS**: Identify "Springs" (false breakdowns) or "Upthrusts" (false breakouts). If price briefly breaks a key level but closes back inside with high volume, bias is the OPPOSITE of the breakout.
-4. **DIRECTION ONLY (NO MATH)**: DO NOT calculate Entry, SL, TP, or pick swing levels. AI models make arithmetic and geometry errors. 
-   - Just tell us if the setup is a BUY or SELL based on the confluence.
-   - Python will automatically look at the Current Price, find the nearest Swing High/Low, and calculate mathematically perfect Entry, SL, and TP with strict, asset-specific risk caps.
+4. **STRICT CONTRADICTION RULES**: 
+   - If H1/H4 shows a BEARISH reversal pattern (e.g., Bearish Inverted Hammer, Bearish Shooting Star), you CANNOT signal a BUY. 
+   - If H1/H4 shows a BULLISH reversal pattern (e.g., Bullish Hammer, Bullish Engulfing), you CANNOT signal a SELL.
+   - Body strength > 70% is STRONG. 40-70% is MODERATE. < 40% is WEAK. Do not hallucinate labels.
+5. **DIRECTION ONLY (NO MATH)**: DO NOT calculate Entry, SL, TP. Python will automatically apply strict, asset-specific caps (Gold max 15 pts SL, Oil max 2 pts SL) and calculate a strict 1:2.5 R:R.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
 ═══════════════════════════════════════════════════════════════════════════════
-**HIGH CONFIDENCE (Score 85-100)**: Clear HTF sweep + M15 CHoCH + Early Expansion/Reversal confirmation + Valid wick rejection + Entry at STRONG OB/FVG + NO volume divergence traps.
+**HIGH CONFIDENCE (Score 85-100)**: Clear HTF sweep + M15 CHoCH + Early Expansion/Reversal confirmation + Valid wick rejection + Entry at STRONG OB/FVG + NO multi-timeframe contradictions.
 **MEDIUM CONFIDENCE (Score 70-84)**: 3 timeframes aligned, BOS or CHoCH present, Moderate zone.
-**LOW CONFIDENCE (Score <70)**: Choppy market, strong body with decreasing volume (exhaustion trap), contradictory wick/volume signals, or high-impact news imminent.
+**LOW CONFIDENCE (Score <70)**: Choppy market, contradictory HTF/LTF signals (e.g., H1 Bearish Inverted Hammer vs M15 Bullish), weak body with high volume (absorption), or high-impact news imminent.
 
 ═══════════════════════════════════════════════════════════════════════════════
 YOUR TASK:
 ═══════════════════════════════════════════════════════════════════════════════
-1. Analyze intra-candle data FIRST. Reject immediately if volume divergence or contradictory wicks are present.
+1. Analyze intra-candle data FIRST. Reject immediately if multi-timeframe contradictions or absorption traps are present.
 2. Determine H4/H1 macro bias. Look for early reversal or expansion triggers on M15/M10.
-3. Decide if this is a BUY or SELL setup.
+3. Decide if this is a BUY or SELL setup. If contradictory, set to WAIT.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
 OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax:
@@ -364,6 +366,28 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
+# ── PYTHON "BS DETECTOR" (LOGIC VALIDATION) ──────────────────────────────────
+def validate_ai_logic(analysis):
+    """Ruthlessly checks the AI's own text output for logical contradictions."""
+    signal = analysis.get('signal')
+    pattern = analysis.get('recent_pattern', '').lower()
+    reasoning = analysis.get('reasoning', '').lower()
+    body_strength = analysis.get('body_strength', '').lower()
+    
+    if signal == 'BUY':
+        if 'bearish inverted hammer' in pattern or 'bearish shooting star' in pattern:
+            return False, "Contradictory Pattern: HTF shows bearish rejection (Inverted Hammer/Shooting Star), invalidating BUY signal."
+        if 'weak' in body_strength or ('40%' in body_strength or '45%' in body_strength or '46%' in body_strength or '47%' in body_strength or '48%' in body_strength or '49%' in body_strength):
+            return False, "Contradictory Strength: AI detected weak/moderate body strength (<50%), invalidating HIGH confidence BUY."
+            
+    elif signal == 'SELL':
+        if 'bullish hammer' in pattern or 'bullish engulfing' in pattern:
+            return False, "Contradictory Pattern: HTF shows bullish rejection, invalidating SELL signal."
+        if 'weak' in body_strength or ('40%' in body_strength or '45%' in body_strength or '46%' in body_strength or '47%' in body_strength or '48%' in body_strength or '49%' in body_strength):
+            return False, "Contradictory Strength: AI detected weak/moderate body strength (<50%), invalidating HIGH confidence SELL."
+            
+    return True, "Valid"
+
 # ── PYTHON GEOMETRY ENFORCER (ASSET-SPECIFIC REALISTIC CAPS) ─────────────────
 def enforce_structural_math(analysis, swings, current_price, symbol):
     """Calculates mathematically perfect Entry, SL, and TP with strict, asset-specific caps."""
@@ -398,7 +422,6 @@ def enforce_structural_math(analysis, swings, current_price, symbol):
         valid_tp_levels = [l for l in swing_lows if l < current_price]
         nearest_swing_low = valid_tp_levels[0] if valid_tp_levels else None
         
-        # If target TP overshoots the structural low, pull it back to sit just above it
         if nearest_swing_low and target_tp < nearest_swing_low:
             analysis['take_profit'] = [round(nearest_swing_low + 0.5, 2)]
         else:
@@ -418,7 +441,6 @@ def enforce_structural_math(analysis, swings, current_price, symbol):
         valid_tp_levels = [h for h in swing_highs if h > current_price]
         nearest_swing_high = valid_tp_levels[0] if valid_tp_levels else None
         
-        # If target TP overshoots the structural high, pull it back to sit just below it
         if nearest_swing_high and target_tp > nearest_swing_high:
             analysis['take_profit'] = [round(nearest_swing_high - 0.5, 2)]
         else:
@@ -540,7 +562,6 @@ def analyze_symbol_premium(symbol):
         
         analysis = call_gpt("You are an ELITE institutional trader. Output ONLY valid JSON with ZERO guesswork.", user_content, max_tokens=2000)
         
-        # PYTHON GEOMETRY ENFORCEMENT: Python finds the correct structural levels with asset-specific caps
         analysis = enforce_structural_math(analysis, swings, current_price, symbol)
         
         analysis['symbol'] = symbol
@@ -659,15 +680,24 @@ with tab1:
             st.error(f"❌ Error analyzing {symbol}: {error_msg}")
             return
 
+        # 1. PYTHON "BS DETECTOR" CHECK
+        is_valid_logic, logic_reason = validate_ai_logic(result)
+        if not is_valid_logic:
+            msg = f"⚪ **{symbol}**: Signal Rejected. AI Logic Flaw: {logic_reason}"
+            if not is_auto: st.info(msg)
+            add_notification('warning', msg)
+            return
+
+        # 2. MATH VALIDATION CHECK
+        is_valid_math, math_reason = validate_signal_math(result)
+        if not is_valid_math:
+            msg = f"⚪ **{symbol}**: Signal Rejected. AI Reason: {math_reason}"
+            if not is_auto: st.info(msg)
+            add_notification('warning', msg)
+            return
+
         min_score = sensitivity
         if result.get('confidence') == 'HIGH' and result.get('confluence_score', 0) >= min_score:
-            is_valid_math, math_reason = validate_signal_math(result)
-            if not is_valid_math:
-                msg = f"⚪ **{symbol}**: Signal Rejected. AI Reason: {math_reason}"
-                if not is_auto: st.info(msg)
-                add_notification('warning', msg)
-                return
-
             is_repeat = False
             current_time = datetime.now()
             if symbol in st.session_state.active_signals:
@@ -812,7 +842,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- **Asset-Specific Risk Caps:** Gold SL capped at 15 points (150 pips), Oil at 2 points. Python enforces strict 1:2.5 R:R.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- **AI Logic Validator (BS Detector):** Python actively scans AI output. If AI signals BUY but notes 'Bearish Inverted Hammer', it is instantly rejected.\n- **Asset-Specific Risk Caps:** Gold SL capped at 15 points, Oil at 2 points. Python enforces strict 1:2.5 R:R.\n- **Auto-Retry & Rate Limit Protection:** 15-second delays + 60-second silent backoff to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
