@@ -300,8 +300,8 @@ def detect_liquidity_sweeps(df):
     
     return sweeps[-2:]
 
-# ── Premium AI Analysis Prompt (FIXED MATH & VOLUME LOGIC) ────────────────────
-PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis. NO GUESSWORK. NO HALLUCINATIONS.
+# ── Premium AI Analysis Prompt (UPGRADED: EARLY EXPANSION, REVERSAL & TRAPS) ──
+PREMIUM_ANALYSIS_PROMPT = """You are an ELITE institutional trading AI. You MUST perform exhaustive, data-driven analysis to detect EARLY EXPANSION and EARLY REVERSAL setups. NO GUESSWORK. NO HALLUCINATIONS.
 
 DATA PROVIDED:
 {data_summary}
@@ -315,27 +315,28 @@ HIGH IMPACT NEWS (next 24h):
 ═══════════════════════════════════════════════════════════════════════════════
 MANDATORY ANALYSIS REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════════════════
-1. **INTRA-CANDLE PRECISION (STRICT WICK & VOLUME LOGIC)**:
-   - Upper wick on a BEARISH candle = Bearish rejection (VALID for SELL).
-   - Lower wick on a BEARISH candle = Bullish absorption (INVALID for SELL).
-   - Reverse logic for BULLISH candles.
-   - VOLUME DIVERGENCE TRAP: A strong candle body (>70%) combined with DECREASING volume is an exhaustion trap. YOU MUST LOWER THE SCORE SIGNIFICANTLY AND REJECT THE SIGNAL.
+1. **EARLY REVERSAL DETECTION**: 
+   - Look for HTF liquidity sweeps (taking out previous Swing Highs/Lows) into a key HTF Order Block or FVG.
+   - Confirm with immediate M15/M10 Change of Character (CHoCH) and strong rejection wicks (wick ratio > 60%).
+   - Divergence: Price makes a new extreme, but RSI or Volume does not confirm (exhaustion).
 
-2. **MULTI-TIMEFRAME CONFLUENCE**: H4/H1 for macro bias, M15 for structural zones. REQUIRE minimum 3 timeframes aligned.
+2. **EARLY EXPANSION DETECTION**:
+   - Look for ATR compression (coiling/tight consolidation) followed by a sudden, strong directional candle.
+   - VALIDATION: The expansion candle MUST have INCREASING volume. Strong body + decreasing volume = TRAP/EXHAUSTION (REJECT SIGNAL).
 
-3. **SMC ELEMENTS**: Identify BOS/CHoCH, liquidity sweeps, Order Blocks, and FVGs.
+3. **MANIPULATION & TRAP IDENTIFICATION**:
+   - "Spring" (False Breakdown) or "Upthrust" (False Breakout): Price briefly breaks a key level but closes back inside the range with high volume. This is a trap. Bias is the OPPOSITE of the breakout.
 
-4. **RISK MANAGEMENT & TP CALCULATION (STRICT MATHEMATICAL RULES)**:
-   - For a BUY signal: Entry MUST be strictly LESS than TP1 and TP2. Stop Loss (SL) MUST be strictly LESS than Entry.
-   - For a SELL signal: Entry MUST be strictly GREATER than TP1 and TP2. Stop Loss (SL) MUST be strictly GREATER than Entry.
-   - TP1 MUST target the nearest 'Recent Swing Highs' (for BUY) or 'Recent Swing Lows' (for SELL) explicitly provided in the data.
-   - SL MUST be placed below the recent Swing Low (for BUY) or above the recent Swing High (for SELL).
-   - DO NOT hallucinate price levels. Use the exact 'Swing Highs/Lows' provided.
+4. **PERFECT ZONE ESTABLISHMENT & PRECISE MATH**:
+   - DO NOT guess prices. Use the EXACT 'Swing Highs' and 'Swing Lows' provided in the data.
+   - For BUY: Entry = Current Price or limit at Bullish OB top. SL = Recent Swing Low - small buffer. TP1 = Next Recent Swing High. TP2 = HTF Swing High or minimum 1:2.5 R:R.
+   - For SELL: Entry = Current Price or limit at Bearish OB bottom. SL = Recent Swing High + small buffer. TP1 = Next Recent Swing Low. TP2 = HTF Swing Low or minimum 1:2.5 R:R.
+   - MATHEMATICAL RULE: BUY requires TP > Entry > SL. SELL requires TP < Entry < SL.
 
 ═══════════════════════════════════════════════════════════════════════════════
 SCORING CRITERIA (BE BRUTALLY HONEST):
 ═══════════════════════════════════════════════════════════════════════════════
-**HIGH CONFIDENCE (Score 85-100)**: 4-5 timeframes aligned, Clear BOS + CHoCH, Valid wick rejection, Entry at STRONG OB/FVG, R:R ≥ 1:2, NO volume divergence traps.
+**HIGH CONFIDENCE (Score 85-100)**: Clear HTF sweep + M15 CHoCH + Early Expansion/Reversal confirmation + Valid wick rejection + Entry at STRONG OB/FVG + R:R ≥ 1:2.5 + NO volume divergence traps.
 **MEDIUM CONFIDENCE (Score 70-84)**: 3 timeframes aligned, BOS or CHoCH present, Moderate zone, R:R ≥ 1:2.
 **LOW CONFIDENCE (Score <70)**: Choppy market, strong body with decreasing volume (exhaustion trap), contradictory wick/volume signals, poor R:R, or high-impact news imminent.
 
@@ -343,8 +344,8 @@ SCORING CRITERIA (BE BRUTALLY HONEST):
 YOUR TASK:
 ═══════════════════════════════════════════════════════════════════════════════
 1. Analyze intra-candle data FIRST. Reject immediately if volume divergence or contradictory wicks are present.
-2. Determine H4/H1 bias. Find M15 zones. 
-3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity (BUY: TP > Entry > SL).
+2. Determine H4/H1 macro bias. Look for early reversal or expansion triggers on M15/M10.
+3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
 OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
@@ -369,7 +370,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON):
   "stop_loss": 0.00,
   "take_profit": [0.00, 0.00],
   "rr_ratio": 0.00,
-  "reasoning": "Detailed explanation citing SPECIFIC intra-candle patterns, multi-TF confluence, and structural levels",
+  "reasoning": "Detailed explanation citing SPECIFIC early expansion/reversal triggers, manipulation traps avoided, multi-TF confluence, and structural levels",
   "rejection_reason": "If signal is WAIT or score < 85, explicitly list the missing confluence factors, contradictory wick/volume logic, or invalid math",
   "news_impact": "Analysis if news approaching"
 }}
@@ -415,28 +416,47 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
     
     return json.loads(content.strip())
 
-# ── Mathematical Validation Guardrail ─────────────────────────────────────────
+# ── Mathematical Validation Guardrail (UPGRADED: Checks R:R Accuracy) ─────────
 def validate_signal_math(analysis):
-    """Ensures the AI's TP and SL mathematically make sense for the signal direction."""
+    """Ensures the AI's TP, SL, Entry, and R:R mathematically make sense."""
     signal = analysis.get('signal')
     entry = analysis.get('entry', 0)
     sl = analysis.get('stop_loss', 0)
     tp_list = analysis.get('take_profit', [])
     tp1 = tp_list[0] if len(tp_list) > 0 else 0
+    ai_rr = analysis.get('rr_ratio', 0)
     
     if not entry or not sl or not tp1:
         return False, "Missing entry, SL, or TP values."
     
+    # 1. Directional Math Validation
     if signal == "BUY":
         if tp1 <= entry:
             return False, f"Invalid Math: For BUY, TP1 ({tp1}) MUST be > Entry ({entry})."
         if sl >= entry:
             return False, f"Invalid Math: For BUY, SL ({sl}) MUST be < Entry ({entry})."
+        risk = abs(entry - sl)
+        reward = abs(tp1 - entry)
     elif signal == "SELL":
         if tp1 >= entry:
             return False, f"Invalid Math: For SELL, TP1 ({tp1}) MUST be < Entry ({entry})."
         if sl <= entry:
             return False, f"Invalid Math: For SELL, SL ({sl}) MUST be > Entry ({entry})."
+        risk = abs(sl - entry)
+        reward = abs(entry - tp1)
+    else:
+        return False, "Invalid signal direction."
+        
+    if risk == 0:
+        return False, "Invalid Math: Risk (Entry to SL distance) cannot be zero."
+        
+    # 2. R:R Validation (Allow small floating point tolerance)
+    actual_rr = reward / risk
+    if abs(actual_rr - ai_rr) > 0.5: # If AI claims 3.0 but math shows 1.2, reject
+        return False, f"Invalid Math: AI claimed R:R of {ai_rr}, but actual math based on Entry/SL/TP is {actual_rr:.2f}."
+        
+    if actual_rr < 2.0: # Enforce minimum 1:2 R:R for HIGH confidence
+        return False, f"Invalid Math: Actual R:R is {actual_rr:.2f}, which is below the minimum 1:2.0 requirement for HIGH confidence."
             
     return True, "Valid"
 
@@ -600,7 +620,7 @@ st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Ale
 # Sidebar Configuration
 st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
 
 # NEW: Sensitivity Slider
 st.sidebar.markdown("---")
@@ -869,7 +889,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.5**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
