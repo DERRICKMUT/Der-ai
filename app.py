@@ -295,7 +295,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 }}
 """
 
-# ── AI Analysis Function (WITH AUTO-RETRY FOR JSON FIXES) ─────────────────────
+# ── AI Analysis Function (WITH ANTI-BURST & AUTO-RETRY) ───────────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, retry_count: int = 0) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
@@ -303,6 +303,9 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, ret
     
     if not api_key or not api_key.startswith("gsk_"):
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "Missing or invalid Groq API Key."}
+
+    # FIX: 1-second cool-down to prevent Groq from flagging this as a "burst" request
+    time.sleep(1)
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -510,7 +513,7 @@ st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Ale
 
 st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Signal Sensitivity")
@@ -660,9 +663,9 @@ with tab1:
             with st.spinner(f"Analyzing {symbol}..."):
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=False)
             
-            # FIX: Increased delay to 5 seconds to absolutely guarantee no Groq RPM limits are hit
+            # FIX: Increased delay to 15 seconds to absolutely guarantee no Groq RPM limits are hit
             if i < len(selected_symbols) - 1:
-                time.sleep(5)
+                time.sleep(15)
                 
             progress_bar.progress((i + 1) / len(selected_symbols))
         progress_bar.empty()
@@ -680,9 +683,9 @@ with tab1:
                     break
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=True)
                 
-                # FIX: Increased delay to 5 seconds to absolutely guarantee no Groq RPM limits are hit
+                # FIX: Increased delay to 15 seconds to absolutely guarantee no Groq RPM limits are hit
                 if i < len(selected_symbols) - 1:
-                    time.sleep(5)
+                    time.sleep(15)
                     
                 progress_bar.progress((i + 1) / len(selected_symbols))
             progress_bar.empty()
@@ -752,7 +755,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 5-second delays between symbols to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 15-second delays + 1-second pre-request cool-down to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
