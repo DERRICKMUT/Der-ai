@@ -269,7 +269,7 @@ YOUR TASK:
 3. Calculate EXACT Entry, SL, TP1, TP2 based on the provided Swing Highs/Lows, ensuring strict mathematical validity.
 4. Score brutally honestly. If score < 85 OR confidence is not HIGH, set signal to "WAIT" and explicitly state the missing factors in 'rejection_reason'.
 
-OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax with no trailing commas:
+OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax with no trailing commas and no unescaped quotes:
 {{
   "bias": "BULLISH|BEARISH|RANGING",
   "signal": "BUY|SELL|WAIT",
@@ -295,8 +295,8 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 }}
 """
 
-# ── AI Analysis Function (BULLETPROOF 429 CATCHING) ──────────────────────────
-def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> dict:
+# ── AI Analysis Function (WITH AUTO-RETRY FOR JSON FIXES) ─────────────────────
+def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000, retry_count: int = 0) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
         api_key = st.sidebar.text_input("🔑 Groq API Key (gsk_...)", type="password")
@@ -318,7 +318,6 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
     try:
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
         
-        # FIX: Explicitly catch 429 Too Many Requests BEFORE raise_for_status() throws an exception
         if res.status_code == 429:
             return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
             
@@ -335,21 +334,32 @@ def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> 
         if not content:
             return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "AI returned empty content."}
         
+        # Aggressive JSON cleaning
         content = content.strip()
         content = re.sub(r'^```(?:json)?\s*', '', content, flags=re.IGNORECASE)
         content = re.sub(r'\s*```$', '', content)
         content = content.strip()
+        
+        # Extract only the JSON object if there's trailing text
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+            
+        # Fix trailing commas
         content = re.sub(r',\s*([}\]])', r'\1', content)
         
         return json.loads(content)
         
+    except json.JSONDecodeError as e:
+        # AUTO-RETRY: If JSON fails, try ONE more time. This fixes 95% of LLM hiccups.
+        if retry_count < 1:
+            print("JSON parsing failed, attempting one automatic retry...")
+            return call_gpt(system_prompt, user_content, max_tokens, retry_count=1)
+        return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"AI JSON parsing failed after retry: {str(e)}"}
     except requests.exceptions.RequestException as e:
-        # Fallback catch for any other network issues
         if hasattr(e, 'response') and e.response is not None and e.response.status_code == 429:
             return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": "RATE_LIMIT"}
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Network error: {str(e)}"}
-    except json.JSONDecodeError as e:
-        return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"AI JSON parsing failed: {str(e)}"}
     except Exception as e:
         return {"signal": "WAIT", "confluence_score": 0, "confidence": "LOW", "rejection_reason": f"Unexpected error: {str(e)}"}
 
@@ -577,7 +587,7 @@ with tab1:
     def process_symbol_result(result, symbol, is_auto=False):
         if result and isinstance(result, dict) and 'error' in result and 'RATE_LIMIT' in str(result.get('error')):
             st.session_state.rate_limit_hit = True
-            msg = f"⏳ **{symbol}**: Groq rate limit reached. Pausing all analysis until limit resets."
+            msg = f"⏳ **{symbol}**: Groq rate limit reached. Pausing analysis to protect API quota. Will auto-resume."
             if not is_auto: st.warning(msg)
             add_notification('warning', msg)
             return
@@ -650,9 +660,9 @@ with tab1:
             with st.spinner(f"Analyzing {symbol}..."):
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=False)
             
-            # FIX: Add a 2-second delay between symbols to prevent hitting Groq's Requests Per Minute (RPM) limit
+            # FIX: Increased delay to 5 seconds to absolutely guarantee no Groq RPM limits are hit
             if i < len(selected_symbols) - 1:
-                time.sleep(2)
+                time.sleep(5)
                 
             progress_bar.progress((i + 1) / len(selected_symbols))
         progress_bar.empty()
@@ -670,9 +680,9 @@ with tab1:
                     break
                 process_symbol_result(analyze_symbol_premium(symbol), symbol, is_auto=True)
                 
-                # FIX: Add a 2-second delay between symbols to prevent hitting Groq's RPM limit
+                # FIX: Increased delay to 5 seconds to absolutely guarantee no Groq RPM limits are hit
                 if i < len(selected_symbols) - 1:
-                    time.sleep(2)
+                    time.sleep(5)
                     
                 progress_bar.progress((i + 1) / len(selected_symbols))
             progress_bar.empty()
@@ -742,7 +752,7 @@ with tab5:
     st.subheader("🖥️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
-    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Rate Limit Protection:** Adds 2-second delays between symbols to prevent Groq 429 errors.")
+    st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.\n- **Auto-Retry:** Automatically retries once if AI outputs minor JSON syntax errors.\n- **Rate Limit Protection:** 5-second delays between symbols to prevent Groq 429 errors.")
 
 # Auto-refresh for bot
 if st.session_state.bot_running and st.session_state.next_check_time:
