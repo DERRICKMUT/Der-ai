@@ -620,7 +620,7 @@ st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Ale
 # Sidebar Configuration
 st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
 
 # NEW: Sensitivity Slider
 st.sidebar.markdown("---")
