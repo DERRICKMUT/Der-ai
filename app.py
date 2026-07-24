@@ -12,7 +12,7 @@ try:
 except ImportError:
     MT5_AVAILABLE = False
 
-# ── Page Config ───────────────────────────────────────────────────────────────
+# ─ Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Der-AI | Professional Trading System",
     page_icon="🎯",
@@ -36,18 +36,119 @@ if 'app_notifications' not in st.session_state:
 if 'rate_limit_hit' not in st.session_state:
     st.session_state.rate_limit_hit = False
 
+# ── Load Persistent Settings ──────────────────────────────────────────────────
+# Check URL parameters first, then secrets, then defaults
+query_params = st.query_params.to_dict() if hasattr(st.query_params, 'to_dict') else {}
+
+# MT5 Settings - Load from Secrets (secure) or URL params (convenient)
+MT5_ACCOUNT_DEFAULT = st.secrets.get("MT5_ACCOUNT", query_params.get("mt5_account", ""))
+MT5_SERVER_DEFAULT = st.secrets.get("MT5_SERVER", query_params.get("mt5_server", ""))
+MT5_LOT_SIZE_DEFAULT = float(st.secrets.get("MT5_LOT_SIZE", query_params.get("mt5_lot_size", "0.01")))
+MT5_NUM_TRADES_DEFAULT = int(st.secrets.get("MT5_NUM_TRADES", query_params.get("mt5_num_trades", "1")))
+
 # ── API Keys & Config ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
-# MT5 Config
+# MT5 Config - Initialize from persistent defaults
+if 'mt5_account' not in st.session_state:
+    st.session_state.mt5_account = MT5_ACCOUNT_DEFAULT
+if 'mt5_password' not in st.session_state:
+    st.session_state.mt5_password = ""  # Never store password in URL
+if 'mt5_server' not in st.session_state:
+    st.session_state.mt5_server = MT5_SERVER_DEFAULT
+if 'mt5_lot_size' not in st.session_state:
+    st.session_state.mt5_lot_size = MT5_LOT_SIZE_DEFAULT
+if 'mt5_num_trades' not in st.session_state:
+    st.session_state.mt5_num_trades = MT5_NUM_TRADES_DEFAULT
+
 MT5_ENABLED = st.sidebar.checkbox("Enable MT5 Auto-Execution", value=False)
+
+# Display MT5 Settings in Sidebar
 if MT5_ENABLED:
-    MT5_ACCOUNT = st.sidebar.text_input("MT5 Account Number", "")
-    MT5_PASSWORD = st.sidebar.text_input("MT5 Password", type="password")
-    MT5_SERVER = st.sidebar.text_input("MT5 Server", "")
-    MT5_LOT_SIZE = st.sidebar.number_input("Lot Size per Trade", value=0.01, min_value=0.01, max_value=100.0, step=0.01)
-    MT5_NUM_TRADES = st.sidebar.number_input("Number of Trades to Execute", value=1, min_value=1, max_value=10, step=1)
+    st.sidebar.subheader("️ MT5 Configuration")
+    
+    # Account Number
+    mt5_account_input = st.sidebar.text_input(
+        "MT5 Account Number", 
+        value=st.session_state.mt5_account,
+        key="mt5_account_input"
+    )
+    if mt5_account_input != st.session_state.mt5_account:
+        st.session_state.mt5_account = mt5_account_input
+        st.query_params["mt5_account"] = mt5_account_input
+    
+    # Password (never saved to URL)
+    mt5_password_input = st.sidebar.text_input(
+        "MT5 Password", 
+        value=st.session_state.mt5_password,
+        type="password",
+        key="mt5_password_input"
+    )
+    st.session_state.mt5_password = mt5_password_input
+    
+    # Server
+    mt5_server_input = st.sidebar.text_input(
+        "MT5 Server", 
+        value=st.session_state.mt5_server,
+        key="mt5_server_input"
+    )
+    if mt5_server_input != st.session_state.mt5_server:
+        st.session_state.mt5_server = mt5_server_input
+        st.query_params["mt5_server"] = mt5_server_input
+    
+    # Lot Size
+    mt5_lot_input = st.sidebar.number_input(
+        "Lot Size per Trade", 
+        value=st.session_state.mt5_lot_size,
+        min_value=0.01, 
+        max_value=100.0, 
+        step=0.01,
+        key="mt5_lot_input"
+    )
+    if mt5_lot_input != st.session_state.mt5_lot_size:
+        st.session_state.mt5_lot_size = mt5_lot_input
+        st.query_params["mt5_lot_size"] = str(mt5_lot_input)
+    
+    # Number of Trades
+    mt5_num_input = st.sidebar.number_input(
+        "Number of Trades to Execute", 
+        value=st.session_state.mt5_num_trades,
+        min_value=1, 
+        max_value=10, 
+        step=1,
+        key="mt5_num_input"
+    )
+    if mt5_num_input != st.session_state.mt5_num_trades:
+        st.session_state.mt5_num_trades = mt5_num_input
+        st.query_params["mt5_num_trades"] = str(mt5_num_input)
+    
+    # Save to Secrets Button (for one-time setup)
+    if st.sidebar.button("💾 Save Credentials to Secrets"):
+        st.sidebar.info("""
+        **To permanently save your credentials:**
+        
+        1. Go to your Streamlit Dashboard
+        2. Click on your app → Settings → Secrets
+        3. Add these entries:
+        ```toml
+        MT5_ACCOUNT = "your_account_number"
+        MT5_SERVER = "your_server_name"
+        MT5_LOT_SIZE = "0.01"
+        MT5_NUM_TRADES = "1"
+        ```
+        4. Click Save
+        
+        **Note:** For security, MT5 Password should NEVER be stored in Secrets. 
+        Enter it manually each session or use a Windows VPS with MT5 installed locally.
+        """)
+
+# Use session values for execution
+MT5_ACCOUNT = st.session_state.mt5_account
+MT5_PASSWORD = st.session_state.mt5_password
+MT5_SERVER = st.session_state.mt5_server
+MT5_LOT_SIZE = st.session_state.mt5_lot_size
+MT5_NUM_TRADES = st.session_state.mt5_num_trades
 
 # Symbols to monitor (Reduced to save tokens)
 SYMBOLS = ['XAUUSD', 'USOIL']
@@ -364,7 +465,7 @@ OUTPUT JSON ONLY (NO MARKDOWN, NO TEXT OUTSIDE JSON). Ensure perfect JSON syntax
 }}
 """
 
-# ── AI Analysis Function (Groq Free API - Optimized & Robust) ─────────────────
+# ── AI Analysis Function (Groq Free API - Optimized & Robust) ────────────────
 def call_gpt(system_prompt: str, user_content: list, max_tokens: int = 2000) -> dict:
     api_key = st.secrets.get("GROQ_API_KEY", "")
     if not api_key:
@@ -512,7 +613,7 @@ def execute_mt5_trade(symbol, direction, entry, sl, tp, lot_size, num_trades=1):
     except Exception as e:
         return {"error": str(e)}
 
-# ── Premium Signal Generation Engine ──────────────────────────────────────────
+# ─ Premium Signal Generation Engine ──────────────────────────────────────────
 def analyze_symbol_premium(symbol):
     try:
         mtf_data = fetch_mtf_data(symbol)
@@ -579,18 +680,18 @@ def analyze_symbol_premium(symbol):
         print(f"Analysis error for {symbol}: {e}")
         return {"error": str(e)}
 
-# ── Signal Formatter for Telegram ────────────────────────────────────────────
+# ─ Signal Formatter for Telegram ────────────────────────────────────────────
 def format_signal_for_telegram(analysis):
     if 'error' in analysis:
         return f"❌ Error: {analysis['error']}"
     
-    emoji = "🟢" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
+    emoji = "" if analysis.get('signal') == "BUY" else "🔴" if analysis.get('signal') == "SELL" else ""
     
     message = f"""
 {emoji} <b>DER-AI PREMIUM SIGNAL</b> {emoji}
 
-📊 <b>{analysis['symbol']}</b> - {analysis.get('signal', 'WAIT')}
-⏰ {analysis.get('timestamp', 'N/A')}
+ <b>{analysis['symbol']}</b> - {analysis.get('signal', 'WAIT')}
+ {analysis.get('timestamp', 'N/A')}
 
 🎯 <b>CONFIDENCE: {analysis.get('confidence', 'N/A')}</b>
 📈 <b>SCORE: {analysis.get('confluence_score', 0)}/100</b>
@@ -601,7 +702,7 @@ def format_signal_for_telegram(analysis):
 🎯 <b>TP1:</b> {analysis.get('take_profit', ['N/A'])[0] if analysis.get('take_profit') else 'N/A'}
 🎯 <b>TP2:</b> {analysis.get('take_profit', ['N/A', 'N/A'])[1] if len(analysis.get('take_profit', [])) > 1 else 'N/A'}
 
-🔍 <b>CONFLUENCE:</b>
+ <b>CONFLUENCE:</b>
 • Timeframes: {', '.join(analysis.get('timeframes_aligned', []))}
 • Order Blocks: {len(analysis.get('order_blocks', []))} | FVGs: {len(analysis.get('fvg_zones', []))} | Sweeps: {len(analysis.get('liquidity_sweeps', []))}
 
@@ -620,10 +721,10 @@ st.markdown("**Elite ICT/SMC Analysis with Intra-Candle Precision | Telegram Ale
 # Sidebar Configuration
 st.sidebar.header("⚙️ System Configuration")
 selected_symbols = st.sidebar.multiselect("Monitor Symbols", SYMBOLS, default=['XAUUSD', 'USOIL'])
-check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=5, max_value=60, value=30)
+check_interval = st.sidebar.slider("Analysis Interval (minutes)", min_value=15, max_value=60, value=30)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Signal Sensitivity")
+st.sidebar.subheader(" Signal Sensitivity")
 sensitivity = st.sidebar.select_slider(
     "Minimum Confluence Score",
     options=[80, 85, 90],
@@ -654,7 +755,7 @@ with col3:
         st.session_state.last_analysis_time = None
         st.session_state.next_check_time = None
         st.session_state.rate_limit_hit = False
-        add_notification('info', "🗑️ System memory cleared.")
+        add_notification('info', "️ System memory cleared.")
         st.rerun()
 
 # Bot Status Display
@@ -663,14 +764,14 @@ if st.session_state.bot_running:
     if st.session_state.next_check_time:
         time_left = (st.session_state.next_check_time - datetime.now()).total_seconds()
         if time_left > 0:
-            st.sidebar.info(f"⏱️ Next check in: **{int(time_left // 60)}m {int(time_left % 60)}s**")
+            st.sidebar.info(f"️ Next check in: **{int(time_left // 60)}m {int(time_left % 60)}s**")
         else:
             st.sidebar.info("⏱️ Checking now...")
 else:
     st.sidebar.warning("⏸️ **BOT STOPPED**")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Session Stats")
+st.sidebar.subheader(" Session Stats")
 st.sidebar.metric("Premium Signals", len(st.session_state.signal_history))
 st.sidebar.metric("Notifications", len(st.session_state.app_notifications))
 
@@ -794,7 +895,7 @@ with tab1:
             
             for i, symbol in enumerate(selected_symbols):
                 if st.session_state.get('rate_limit_hit', False):
-                    st.warning("⏳ Daily token limit reached. Stopping analysis cycle to save resources.")
+                    st.warning(" Daily token limit reached. Stopping analysis cycle to save resources.")
                     break
                 
                 result = analyze_symbol_premium(symbol)
@@ -815,7 +916,7 @@ with tab2:
         st.metric("Total Premium Signals Logged", len(premium_signals))
         
         for i, signal in enumerate(reversed(premium_signals)):
-            with st.expander(f"{'🟢' if signal.get('signal') == 'BUY' else '🔴'} {signal['symbol']} - {signal.get('signal')} | Score: {signal.get('confluence_score')}/100 | {signal.get('timestamp', 'N/A')}", expanded=False):
+            with st.expander(f"{'🟢' if signal.get('signal') == 'BUY' else ''} {signal['symbol']} - {signal.get('signal')} | Score: {signal.get('confluence_score')}/100 | {signal.get('timestamp', 'N/A')}", expanded=False):
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Entry", signal.get('entry', 'N/A'))
                 col2.metric("Stop Loss", signal.get('stop_loss', 'N/A'))
@@ -826,7 +927,7 @@ with tab2:
                 st.write(f"**Reasoning:** {signal.get('reasoning')}")
                 
                 if MT5_ENABLED:
-                    if st.button(f"⚡ Execute {MT5_NUM_TRADES} trade(s) on MT5", key=f"exec_{i}", use_container_width=True):
+                    if st.button(f" Execute {MT5_NUM_TRADES} trade(s) on MT5", key=f"exec_{i}", use_container_width=True):
                         exec_result = execute_mt5_trade(
                             symbol=signal['symbol'],
                             direction=signal.get('signal'),
@@ -881,7 +982,7 @@ with tab5:
     st.header("⚙️ System Settings")
     st.subheader("📱 Telegram Setup")
     st.markdown("1. Create a bot via @BotFather on Telegram\n2. Get your bot token\n3. Get your chat ID (use @userinfobot)\n4. Add to Streamlit Secrets: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`")
-    st.subheader("🖥️ MT5 Auto-Execution")
+    st.subheader("️ MT5 Auto-Execution")
     st.markdown("1. Check 'Enable MT5 Auto-Execution' in sidebar\n2. Enter your MT5 account details\n3. **Note:** MT5 requires Windows environment. For cloud deployment, use a Windows VPS.")
     st.subheader("🎯 Quality Filters")
     st.info(f"**Current Active Settings:**\n- Minimum Confidence: **HIGH**\n- Minimum Confluence Score: **{sensitivity}/100** (Adjustable via sidebar slider)\n- Minimum R:R Ratio: **1:2.0**\n- **Anti-Spam:** Blocks duplicate signals within 1% price range for 15 minutes.\n- **Math Validation:** Automatically rejects signals with illogical TP/SL placement or fake R:R claims.")
